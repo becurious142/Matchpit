@@ -1,4 +1,4 @@
-import { useGetDashboard, useGetRecentActivity, usePayMatchFinalAmount, useCreatePaymentOrder, useVerifyPayment } from "@workspace/api-client-react";
+import { useGetDashboard, useGetRecentActivity, usePayMatchFinalAmount, useVerifyPayment } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,21 +18,14 @@ export default function Dashboard() {
   const { toast } = useToast();
   const [processingId, setProcessingId] = useState<string | null>(null);
 
-  const createPaymentOrder = useCreatePaymentOrder();
   const verifyPayment = useVerifyPayment();
   const payFinalAmount = usePayMatchFinalAmount();
 
-  const handleFinalPayment = async (matchId: string, amount: number) => {
+  const handleFinalPayment = async (matchId: string) => {
     setProcessingId(matchId);
     try {
-      const tempRefId = `final_${matchId}`;
-      const order = await createPaymentOrder.mutateAsync({
-        data: {
-          type: "match_final",
-          referenceId: matchId,
-          amount: amount
-        }
-      });
+      // Get a match-specific Razorpay order with the correct final fee amount
+      const order = await payFinalAmount.mutateAsync({ matchId });
 
       const isLoaded = await loadRazorpay();
       if (!isLoaded) throw new Error("Razorpay SDK failed to load");
@@ -44,6 +37,11 @@ export default function Dashboard() {
         name: "MATCHPIT",
         description: `Final Match Payment`,
         order_id: order.orderId,
+        prefill: {
+          name: order.prefillName || "",
+          email: order.prefillEmail || "",
+          contact: order.prefillContact || "",
+        },
         theme: { color: "#84cc16" },
         handler: async function (response: any) {
           try {
@@ -53,11 +51,9 @@ export default function Dashboard() {
                 razorpayPaymentId: response.razorpay_payment_id,
                 razorpaySignature: response.razorpay_signature,
                 type: "match_final",
-                referenceId: tempRefId
+                referenceId: matchId,
               }
             });
-
-            await payFinalAmount.mutateAsync({ matchId });
 
             toast({ title: "Payment Successful! 💸", description: "You're all set for the match." });
             refetch();
@@ -177,7 +173,7 @@ export default function Dashboard() {
                       {/* Note: logic to show final payment button depends on participant status, simplified here */}
                       <Button 
                         size="sm" 
-                        onClick={() => handleFinalPayment(match.id, match.finalFeePerPlayer)}
+                        onClick={() => handleFinalPayment(match.id)}
                         disabled={processingId === match.id}
                         className="w-full sm:w-auto font-bold uppercase"
                       >

@@ -29,10 +29,11 @@ Full-stack production-grade app for India (Jaipur-first). pnpm monorepo with Typ
 
 ## Key Commands
 
-- `pnpm run typecheck` — full typecheck across all packages
+- `pnpm run typecheck` — full typecheck across all packages (libs → artifacts → scripts)
 - `pnpm run typecheck:libs` — build composite libs (run before api-server typecheck)
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks from OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
+- `pnpm --filter @workspace/scripts run qa` — run 20-point data integrity QA suite
 
 ## Architecture
 
@@ -107,14 +108,20 @@ scripts/
 
 ## Critical Implementation Notes
 
-- **Payment flow**: createOrder → Razorpay checkout → verifyPayment (idempotent: checks razorpayOrderId) → action (createBooking / joinMatch)
+- **Payment flow (booking/host)**: createOrder → Razorpay checkout → verifyPayment (idempotent: UPDATE existing pending record on razorpayOrderId) → action (createBooking / joinMatch)
+- **Payment flow (final match)**: `POST /hosted-matches/:matchId/final-payment` creates match-specific Razorpay order (validates participant is in "reserved" state) → Razorpay checkout → verifyPayment (auto-updates participant status to "final_paid" for type="match_final")
+- **Payments verify**: UPDATES existing pending payment record (created in create-order) rather than inserting duplicates; falls through to INSERT only for dev-bypass flows without a prior create-order call
 - **Slot booking**: wrapped in a DB transaction to prevent double-booking race conditions
 - **Match join**: checks existing participant before insert; player count updated atomically
+- **Admin enrichment**: bookings list JOIN venues by venueId; hosted-matches list JOIN venues + host profiles via inArray — all denormalized (no null venue/host in responses)
+- **Dashboard confirmedMatches**: venues fetched via inArray across all venue IDs (bookings + confirmed matches) and applied to both lists
+- **book.tsx sport selector**: when venue has >1 sport, a sport picker card is shown before payment; sport defaults to first sport for single-sport venues
 - **req.params in Express**: always cast as `const id = req.params.id as string` (typed `string | string[]` by default)
 - **Orval hooks**: path-only mutations take `{ matchId }` directly (no `{ data: ... }` wrapper); POST-with-body mutations take `{ data: Body }`
 - **lib/db is composite**: run `pnpm run typecheck:libs` before api-server typecheck
 - **Query invalidations**: `book.tsx` invalidates `bookings` + `getVenueSlots`; `match-detail.tsx` invalidates `getHostedMatch` + `listHostedMatches`; `admin.tsx` uses Orval-generated path keys `/api/admin/venues` and `/api/admin/owner-leads`
 - **Admin guard**: `requireAdmin()` helper reads profile from DB, returns 403 if not admin; frontend guards with `profile?.isAdmin` before rendering
+- **scripts/qa.ts**: 20-check data integrity suite using `@workspace/db` directly; run with `pnpm --filter @workspace/scripts run qa`
 
 ## Seeded Data
 

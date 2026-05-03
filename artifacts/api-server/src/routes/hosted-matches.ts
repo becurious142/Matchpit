@@ -10,9 +10,9 @@ import {
   slotsTable,
   notificationsTable,
 } from "@workspace/db";
-import { eq, and, desc, ne } from "drizzle-orm";
+import { eq, and, desc, ne, count } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
-import { verifyRazorpaySignature } from "../lib/razorpay";
+import { razorpay, verifyRazorpaySignature, getRazorpayKeyId } from "../lib/razorpay";
 
 const router: IRouter = Router();
 
@@ -529,17 +529,87 @@ router.post("/hosted-matches/:matchId/final-payment", requireAuth, async (req, r
       return;
     }
 
-    res.json({
-      orderId: `order_final_${Date.now()}`,
-      amount: Number(match.finalFeePerPlayer) * 100,
+    if (match.status !== "confirmed" && match.status !== "funded") {
+      res.status(400).json({ error: "invalid_state", message: "Match is not in a confirmed state" });
+      return;
+    }
+
+    // Verify caller is a registered participant with "reserved" status
+    const [participant] = await db
+      .select()
+      .from(hostedMatchParticipantsTable)
+      .where(
+        and(
+          eq(hostedMatchParticipantsTable.matchId, matchId),
+          eq(hostedMatchParticipantsTable.userId, profile.id),
+        ),
+      )
+      .limit(1);
+
+    if (!participant) {
+      res.status(403).json({ error: "not_participant", message: "You are not a participant of this match" });
+      return;
+    }
+
+    if (participant.status === "final_paid") {
+      res.status(400).json({ error: "already_paid", message: "Final payment already completed" });
+      return;
+    }
+
+    if (participant.status === "cancelled") {
+      res.status(400).json({ error: "cancelled", message: "Your participation has been cancelled" });
+      return;
+    }
+
+    const finalFee = Number(match.finalFeePerPlayer);
+    const amountPaise = Math.round(finalFee * 100);
+
+    if (!razorpay) {
+      // Dev mode: return mock order when no Razorpay keys configured
+      res.json({
+        orderId: `order_dev_final_${Date.now()}`,
+        amount: amountPaise,
+        currency: "INR",
+        razorpayKeyId: "rzp_test_placeholder",
+        prefillName: profile.fullName,
+        prefillEmail: profile.email,
+        prefillContact: profile.phone ?? null,
+      });
+      return;
+    }
+
+    const order = await razorpay.orders.create({
+      amount: amountPaise,
       currency: "INR",
-      razorpayKeyId: process.env.RAZORPAY_KEY_ID ?? "rzp_test_placeholder",
+      notes: {
+        type: "match_final",
+        referenceId: matchId,
+        participantId: participant.id,
+        userId: profile.id,
+      },
+    });
+
+    // Record pending payment
+    await db.insert(paymentsTable).values({
+      userId: profile.id,
+      type: "match_final",
+      referenceId: matchId,
+      razorpayOrderId: order.id,
+      amount: finalFee.toString(),
+      status: "pending",
+    });
+
+    res.json({
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      razorpayKeyId: getRazorpayKeyId(),
       prefillName: profile.fullName,
       prefillEmail: profile.email,
       prefillContact: profile.phone ?? null,
     });
   } catch (err) {
-    req.log.error({ err }, "Error creating final payment");
+    req.log.error({ err }, "Error creating final payment order");
     res.status(500).json({ error: "internal_error", message: "Failed to initiate final payment" });
   }
 });

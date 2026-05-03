@@ -9,7 +9,7 @@ import {
   paymentsTable,
   ownerLeadsTable,
 } from "@workspace/db";
-import { eq, count, sum, desc } from "drizzle-orm";
+import { eq, count, sum, desc, inArray } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 
 const router: IRouter = Router();
@@ -107,22 +107,46 @@ router.get("/admin/bookings", requireAuth, async (req, res) => {
       .limit(50)
       .offset((page - 1) * 50);
 
+    const venueIds = [...new Set(bookings.map((b) => b.venueId))];
+    const venues =
+      venueIds.length > 0
+        ? await db.select().from(venuesTable).where(inArray(venuesTable.id, venueIds))
+        : [];
+    const venueMap = new Map(venues.map((v) => [v.id, v]));
+
     res.json(
-      bookings.map((b) => ({
-        id: b.id,
-        userId: b.userId,
-        venueId: b.venueId,
-        slotId: b.slotId,
-        sport: b.sport,
-        date: b.date,
-        startTime: b.startTime,
-        endTime: b.endTime,
-        totalAmount: Number(b.totalAmount),
-        status: b.status,
-        paymentId: b.paymentId ?? null,
-        createdAt: b.createdAt.toISOString(),
-        venue: null,
-      })),
+      bookings.map((b) => {
+        const v = venueMap.get(b.venueId);
+        return {
+          id: b.id,
+          userId: b.userId,
+          venueId: b.venueId,
+          slotId: b.slotId,
+          sport: b.sport,
+          date: b.date,
+          startTime: b.startTime,
+          endTime: b.endTime,
+          totalAmount: Number(b.totalAmount),
+          status: b.status,
+          paymentId: b.paymentId ?? null,
+          createdAt: b.createdAt.toISOString(),
+          venue: v
+            ? {
+                id: v.id,
+                name: v.name,
+                city: v.city,
+                address: v.address,
+                sports: v.sports ?? [],
+                pricePerHour: Number(v.pricePerHour),
+                coverImage: v.coverImage ?? null,
+                rating: Number(v.rating),
+                totalReviews: v.totalReviews,
+                isApproved: v.isApproved,
+                amenities: v.amenities ?? [],
+              }
+            : null,
+        };
+      }),
     );
   } catch (err) {
     req.log.error({ err }, "Error listing admin bookings");
@@ -141,31 +165,74 @@ router.get("/admin/hosted-matches", requireAuth, async (req, res) => {
       .orderBy(desc(hostedMatchesTable.createdAt))
       .limit(50);
 
+    const venueIds = [...new Set(matches.map((m) => m.venueId))];
+    const hostUserIds = [...new Set(matches.map((m) => m.hostUserId))];
+
+    const [venues, hosts] = await Promise.all([
+      venueIds.length > 0
+        ? db.select().from(venuesTable).where(inArray(venuesTable.id, venueIds))
+        : Promise.resolve([]),
+      hostUserIds.length > 0
+        ? db.select().from(profilesTable).where(inArray(profilesTable.id, hostUserIds))
+        : Promise.resolve([]),
+    ]);
+
+    const venueMap = new Map(venues.map((v) => [v.id, v]));
+    const hostMap = new Map(hosts.map((h) => [h.id, h]));
+
     res.json(
-      matches.map((m) => ({
-        id: m.id,
-        hostUserId: m.hostUserId,
-        venueId: m.venueId,
-        slotId: m.slotId,
-        sport: m.sport,
-        date: m.date,
-        startTime: m.startTime,
-        endTime: m.endTime,
-        totalPlayers: m.totalPlayers,
-        minPlayers: m.minPlayers,
-        currentPlayers: m.currentPlayers,
-        skillLevel: m.skillLevel,
-        hostFee: Number(m.hostFee),
-        reserveFee: Number(m.reserveFee),
-        finalFeePerPlayer: Number(m.finalFeePerPlayer),
-        totalVenueCost: Number(m.totalVenueCost),
-        notes: m.notes ?? null,
-        status: m.status,
-        financialStatus: m.financialStatus,
-        createdAt: m.createdAt.toISOString(),
-        venue: null,
-        host: null,
-      })),
+      matches.map((m) => {
+        const v = venueMap.get(m.venueId);
+        const h = hostMap.get(m.hostUserId);
+        return {
+          id: m.id,
+          hostUserId: m.hostUserId,
+          venueId: m.venueId,
+          slotId: m.slotId,
+          sport: m.sport,
+          date: m.date,
+          startTime: m.startTime,
+          endTime: m.endTime,
+          totalPlayers: m.totalPlayers,
+          minPlayers: m.minPlayers,
+          currentPlayers: m.currentPlayers,
+          skillLevel: m.skillLevel,
+          hostFee: Number(m.hostFee),
+          reserveFee: Number(m.reserveFee),
+          finalFeePerPlayer: Number(m.finalFeePerPlayer),
+          totalVenueCost: Number(m.totalVenueCost),
+          notes: m.notes ?? null,
+          status: m.status,
+          financialStatus: m.financialStatus,
+          createdAt: m.createdAt.toISOString(),
+          venue: v
+            ? {
+                id: v.id,
+                name: v.name,
+                city: v.city,
+                address: v.address,
+                sports: v.sports ?? [],
+                pricePerHour: Number(v.pricePerHour),
+                coverImage: v.coverImage ?? null,
+                rating: Number(v.rating),
+                totalReviews: v.totalReviews,
+                isApproved: v.isApproved,
+                amenities: v.amenities ?? [],
+              }
+            : null,
+          host: h
+            ? {
+                id: h.id,
+                fullName: h.fullName,
+                email: h.email,
+                phone: h.phone ?? null,
+                city: h.city ?? null,
+                avatarUrl: h.avatarUrl ?? null,
+                trustScore: Number(h.trustScore),
+              }
+            : null,
+        };
+      }),
     );
   } catch (err) {
     req.log.error({ err }, "Error listing admin matches");

@@ -18,6 +18,7 @@ export default function Book() {
   const queryClient = useQueryClient();
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [selectedSport, setSelectedSport] = useState<string | null>(null);
 
   const { data: venue, isLoading: loadingVenue } = useGetVenue(venueId!);
   
@@ -32,6 +33,7 @@ export default function Book() {
   const verifyPayment = useVerifyPayment();
   const createBooking = useCreateBooking();
 
+  const sport = selectedSport || (venue?.sports?.[0] ?? "");
   const price = slot?.priceOverride || venue?.pricePerHour || 0;
   const platformFee = 49;
   const totalAmount = price + platformFee;
@@ -90,7 +92,7 @@ export default function Book() {
               data: {
                 venueId: venue.id,
                 slotId: slot.id,
-                sport: venue.sports[0], // taking first sport, ideally user selects
+                sport,
                 razorpayOrderId: response.razorpay_order_id,
                 razorpayPaymentId: response.razorpay_payment_id,
                 razorpaySignature: response.razorpay_signature
@@ -206,6 +208,44 @@ export default function Book() {
               </div>
             </CardContent>
           </Card>
+
+          {venue.sports.length > 1 && (
+            <Card className="bg-card/50 backdrop-blur border-border/50">
+              <CardContent className="p-6">
+                <h3 className="font-bold uppercase text-xs tracking-wider text-muted-foreground mb-4">Select Sport</h3>
+                <div className="flex flex-wrap gap-3">
+                  {venue.sports.map((s) => {
+                    const sportMeta: Record<string, { label: string; icon: string }> = {
+                      football: { label: "Football", icon: "⚽" },
+                      cricket: { label: "Cricket", icon: "🏏" },
+                      badminton: { label: "Badminton", icon: "🏸" },
+                      tennis: { label: "Tennis", icon: "🎾" },
+                      basketball: { label: "Basketball", icon: "🏀" },
+                      volleyball: { label: "Volleyball", icon: "🏐" },
+                      hockey: { label: "Hockey", icon: "🏑" },
+                    };
+                    const meta = sportMeta[s] ?? { label: s, icon: "🏆" };
+                    const isSelected = sport === s;
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setSelectedSport(s)}
+                        className={`px-4 py-2 rounded-xl border-2 font-bold text-sm transition-all flex items-center gap-2 ${
+                          isSelected
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border hover:border-primary/50"
+                        }`}
+                      >
+                        <span>{meta.icon}</span>
+                        <span>{meta.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           <div className="bg-primary/10 border border-primary/20 rounded-xl p-4 flex items-center gap-4">
             <div className="w-12 h-12 bg-primary rounded-full flex items-center justify-center shrink-0">

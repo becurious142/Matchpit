@@ -10,7 +10,7 @@ import {
   paymentsTable,
   venuesTable,
 } from "@workspace/db";
-import { eq, and, desc, count } from "drizzle-orm";
+import { eq, and, desc, count, inArray } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 
 const router: IRouter = Router();
@@ -38,9 +38,14 @@ router.get("/dashboard", requireAuth, async (req, res) => {
       (p) => p.status === "reserved",
     ).length;
 
-    // Fetch venues for upcoming bookings
-    const venueIds = [...new Set(upcomingBookings.map((b) => b.venueId))];
-    const venues = venueIds.length > 0 ? await db.select().from(venuesTable) : [];
+    // Fetch venues for upcoming bookings and confirmed matches
+    const bookingVenueIds = upcomingBookings.map((b) => b.venueId);
+    const matchVenueIds = confirmedMatches.map((m) => m.venueId);
+    const allVenueIds = [...new Set([...bookingVenueIds, ...matchVenueIds])];
+    const venues =
+      allVenueIds.length > 0
+        ? await db.select().from(venuesTable).where(inArray(venuesTable.id, allVenueIds))
+        : [];
     const venueMap = new Map(venues.map((v) => [v.id, v]));
 
     res.json({
@@ -79,30 +84,47 @@ router.get("/dashboard", requireAuth, async (req, res) => {
           } : null,
         };
       }),
-      confirmedMatches: confirmedMatches.map((m) => ({
-        id: m.id,
-        hostUserId: m.hostUserId,
-        venueId: m.venueId,
-        slotId: m.slotId,
-        sport: m.sport,
-        date: m.date,
-        startTime: m.startTime,
-        endTime: m.endTime,
-        totalPlayers: m.totalPlayers,
-        minPlayers: m.minPlayers,
-        currentPlayers: m.currentPlayers,
-        skillLevel: m.skillLevel,
-        hostFee: Number(m.hostFee),
-        reserveFee: Number(m.reserveFee),
-        finalFeePerPlayer: Number(m.finalFeePerPlayer),
-        totalVenueCost: Number(m.totalVenueCost),
-        notes: m.notes ?? null,
-        status: m.status,
-        financialStatus: m.financialStatus,
-        createdAt: m.createdAt.toISOString(),
-        venue: null,
-        host: null,
-      })),
+      confirmedMatches: confirmedMatches.map((m) => {
+        const v = venueMap.get(m.venueId);
+        return {
+          id: m.id,
+          hostUserId: m.hostUserId,
+          venueId: m.venueId,
+          slotId: m.slotId,
+          sport: m.sport,
+          date: m.date,
+          startTime: m.startTime,
+          endTime: m.endTime,
+          totalPlayers: m.totalPlayers,
+          minPlayers: m.minPlayers,
+          currentPlayers: m.currentPlayers,
+          skillLevel: m.skillLevel,
+          hostFee: Number(m.hostFee),
+          reserveFee: Number(m.reserveFee),
+          finalFeePerPlayer: Number(m.finalFeePerPlayer),
+          totalVenueCost: Number(m.totalVenueCost),
+          notes: m.notes ?? null,
+          status: m.status,
+          financialStatus: m.financialStatus,
+          createdAt: m.createdAt.toISOString(),
+          venue: v
+            ? {
+                id: v.id,
+                name: v.name,
+                city: v.city,
+                address: v.address,
+                sports: v.sports ?? [],
+                pricePerHour: Number(v.pricePerHour),
+                coverImage: v.coverImage ?? null,
+                rating: Number(v.rating),
+                totalReviews: v.totalReviews,
+                isApproved: v.isApproved,
+                amenities: v.amenities ?? [],
+              }
+            : null,
+          host: null,
+        };
+      }),
       badges: badges.map((b) => ({
         id: b.id,
         slug: b.slug,

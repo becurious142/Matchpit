@@ -1,8 +1,8 @@
 import { Router, type IRouter } from "express";
 import { getAuth } from "@clerk/express";
 import { db } from "@workspace/db";
-import { paymentsTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { paymentsTable, hostedMatchParticipantsTable } from "@workspace/db";
+import { eq, desc, and } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 import { razorpay, verifyRazorpaySignature, getRazorpayKeyId } from "../lib/razorpay";
 
@@ -75,22 +75,44 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
 
     const { razorpayOrderId, razorpayPaymentId, razorpaySignature, type, referenceId } = req.body;
 
-    // Idempotency: if this payment was already verified, return existing record
+    // Idempotency: if already verified, return existing record
     const [existing] = await db
       .select()
       .from(paymentsTable)
       .where(eq(paymentsTable.razorpayOrderId, razorpayOrderId))
       .limit(1);
+
     if (existing && existing.status === "success") {
+      await maybeMarkParticipantPaid(type, referenceId, profile.id);
       res.json({ success: true, paymentId: existing.id, referenceId, type });
       return;
     }
 
     const isValid = verifyRazorpaySignature(razorpayOrderId, razorpayPaymentId, razorpaySignature);
-    if (!isValid) {
-      // In dev mode without keys, allow through
-      if (!process.env.RAZORPAY_KEY_SECRET) {
-        const [payment] = await db.insert(paymentsTable).values({
+    if (!isValid && process.env.RAZORPAY_KEY_SECRET) {
+      res.status(400).json({ error: "invalid_signature", message: "Payment verification failed" });
+      return;
+    }
+
+    let payment;
+    if (existing) {
+      // Update the existing pending record created during create-order
+      const [updated] = await db
+        .update(paymentsTable)
+        .set({
+          razorpayPaymentId,
+          razorpaySignature,
+          status: "success",
+          updatedAt: new Date(),
+        })
+        .where(eq(paymentsTable.id, existing.id))
+        .returning();
+      payment = updated;
+    } else {
+      // No prior create-order call (e.g. dev bypass with hosted-matches final-payment mock)
+      const [inserted] = await db
+        .insert(paymentsTable)
+        .values({
           userId: profile.id,
           type,
           referenceId: referenceId ?? null,
@@ -99,26 +121,12 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
           razorpaySignature,
           amount: "0",
           status: "success",
-        }).returning();
-
-        res.json({ success: true, paymentId: payment.id, referenceId, type });
-        return;
-      }
-
-      res.status(400).json({ error: "invalid_signature", message: "Payment verification failed" });
-      return;
+        })
+        .returning();
+      payment = inserted;
     }
 
-    const [payment] = await db.insert(paymentsTable).values({
-      userId: profile.id,
-      type,
-      referenceId: referenceId ?? null,
-      razorpayOrderId,
-      razorpayPaymentId,
-      razorpaySignature,
-      amount: "0",
-      status: "success",
-    }).returning();
+    await maybeMarkParticipantPaid(type, referenceId, profile.id);
 
     res.json({ success: true, paymentId: payment.id, referenceId, type });
   } catch (err) {
@@ -126,6 +134,23 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
     res.status(500).json({ error: "internal_error", message: "Failed to verify payment" });
   }
 });
+
+async function maybeMarkParticipantPaid(
+  type: string,
+  referenceId: string | null,
+  userId: string,
+): Promise<void> {
+  if (type !== "match_final" || !referenceId) return;
+  await db
+    .update(hostedMatchParticipantsTable)
+    .set({ status: "final_paid", updatedAt: new Date() })
+    .where(
+      and(
+        eq(hostedMatchParticipantsTable.matchId, referenceId),
+        eq(hostedMatchParticipantsTable.userId, userId),
+      ),
+    );
+}
 
 router.get("/payments/history", requireAuth, async (req, res) => {
   try {
