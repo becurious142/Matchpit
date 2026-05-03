@@ -9,7 +9,6 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Layout } from "@/components/layout";
 
-// Pages
 import Home from "@/pages/home";
 import Venues from "@/pages/venues";
 import VenueDetail from "@/pages/venue-detail";
@@ -24,6 +23,7 @@ import DashboardWallet from "@/pages/dashboard-wallet";
 import Profile from "@/pages/profile";
 import Admin from "@/pages/admin";
 import ListVenue from "@/pages/list-venue";
+import OwnerDashboard from "@/pages/owner-dashboard";
 import NotFound from "@/pages/not-found";
 
 const clerkPubKey = publishableKeyFromHost(
@@ -79,16 +79,17 @@ function Router() {
         <Route path="/matches" component={Matches} />
         <Route path="/matches/:id" component={MatchDetail} />
         <Route path="/host" component={() => <ProtectedRoute component={HostMatch} />} />
-        
+
         <Route path="/dashboard" component={() => <ProtectedRoute component={Dashboard} />} />
         <Route path="/dashboard/bookings" component={() => <ProtectedRoute component={DashboardBookings} />} />
         <Route path="/dashboard/matches" component={() => <ProtectedRoute component={DashboardMatches} />} />
         <Route path="/dashboard/wallet" component={() => <ProtectedRoute component={DashboardWallet} />} />
-        
+
         <Route path="/profile" component={() => <ProtectedRoute component={Profile} />} />
         <Route path="/admin" component={() => <ProtectedRoute component={Admin} />} />
+        <Route path="/owner" component={() => <ProtectedRoute component={OwnerDashboard} />} />
         <Route path="/list-venue" component={ListVenue} />
-        
+
         <Route path="/sign-in/*?">
           <div className="flex min-h-[100dvh] items-center justify-center bg-background px-4">
             <SignIn routing="path" path={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} />

@@ -13,6 +13,7 @@ import adminRouter from "./admin";
 import adminExtendedRouter from "./admin-extended";
 import citiesRouter from "./cities";
 import couponsRouter from "./coupons";
+import ownerRouter from "./owner";
 
 const router: IRouter = Router();
 
@@ -28,6 +29,7 @@ router.use(walletRouter);
 router.use(dashboardRouter);
 router.use(notificationsRouter);
 router.use(ownerLeadsRouter);
+router.use(ownerRouter);
 router.use(adminRouter);
 router.use(adminExtendedRouter);
 

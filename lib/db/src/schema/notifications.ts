@@ -18,6 +18,11 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "booking_reminder",
   "match_cancelled",
   "badge_earned",
+  "match_almost_full",
+  "final_payment_due",
+  "wallet_refund_credited",
+  "player_dropped_unpaid",
+  "match_reopened",
 ]);
 
 export const notificationsTable = pgTable("notifications", {

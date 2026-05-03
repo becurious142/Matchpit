@@ -26,6 +26,7 @@ export const venuesTable = pgTable("venues", {
   closeTime: text("close_time").notNull().default("23:00"),
   contactPhone: text("contact_phone"),
   ownerName: text("owner_name"),
+  ownerUserId: uuid("owner_user_id"),
   amenities: text("amenities").array().notNull().default([]),
   rating: numeric("rating", { precision: 3, scale: 2 }).notNull().default("4.5"),
   totalReviews: integer("total_reviews").notNull().default(0),

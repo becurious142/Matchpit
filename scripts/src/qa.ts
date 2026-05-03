@@ -616,6 +616,166 @@ async function runQA() {
     return rows.every((l) => !l.city || l.city.length <= 50);
   });
 
+  // ─── Participant Status Fix ────────────────────────────────────────────────
+  console.log("\nPARTICIPANT STATUS INTEGRITY");
+
+  await check("All participant statuses match actual DB enum", async () => {
+    const valid = new Set(["reserved", "final_paid", "cancelled", "dropped_unpaid"]);
+    const rows = await db.select({ status: hostedMatchParticipantsTable.status }).from(hostedMatchParticipantsTable);
+    return rows.every((p) => valid.has(p.status));
+  });
+
+  await check("No duplicate userId+matchId in active participant records", async () => {
+    const rows = await db.select({
+      userId: hostedMatchParticipantsTable.userId,
+      matchId: hostedMatchParticipantsTable.matchId,
+    }).from(hostedMatchParticipantsTable)
+      .where(eq(hostedMatchParticipantsTable.status, "reserved"));
+    const keys = rows.map((r) => `${r.userId}::${r.matchId}`);
+    return keys.length === new Set(keys).size;
+  });
+
+  // ─── Trust & Stats ────────────────────────────────────────────────────────
+  console.log("\nTRUST & STATS");
+
+  await check("user_stats reliability_score is between 0 and 100", async () => {
+    const { userStatsTable } = await import("@workspace/db");
+    const rows = await db.select({ score: userStatsTable.reliabilityScore }).from(userStatsTable);
+    return rows.every((r) => Number(r.score) >= 0 && Number(r.score) <= 100);
+  });
+
+  await check("profiles trust_score is between 0 and 100", async () => {
+    const rows = await db.select({ ts: profilesTable.trustScore }).from(profilesTable);
+    return rows.every((p) => Number(p.ts) >= 0 && Number(p.ts) <= 100);
+  });
+
+  await check("profiles.isSuspended column exists", async () => {
+    await db.execute(sql`SELECT is_suspended FROM profiles LIMIT 1`);
+    return true;
+  });
+
+  await check("No suspended admin accounts", async () => {
+    const rows = await db.select({ id: profilesTable.id })
+      .from(profilesTable)
+      .where(and(eq(profilesTable.isAdmin, true), eq(profilesTable.isSuspended, true)));
+    return rows.length === 0;
+  });
+
+  await check("user_stats no_show_count is non-negative", async () => {
+    const { userStatsTable } = await import("@workspace/db");
+    const rows = await db.select({ n: userStatsTable.noShowCount }).from(userStatsTable);
+    return rows.every((r) => r.n >= 0);
+  });
+
+  await check("user_stats completedBookings <= totalBookings", async () => {
+    const { userStatsTable } = await import("@workspace/db");
+    const rows = await db.select({
+      completed: userStatsTable.completedBookings,
+      total: userStatsTable.totalBookings,
+    }).from(userStatsTable);
+    return rows.every((r) => r.completed <= r.total);
+  });
+
+  // ─── Venue Owner Linking ───────────────────────────────────────────────────
+  console.log("\nVENUE OWNER");
+
+  await check("venues.owner_user_id column exists", async () => {
+    await db.execute(sql`SELECT owner_user_id FROM venues LIMIT 1`);
+    return true;
+  });
+
+  await check("Venues with ownerUserId reference existing profiles", async () => {
+    const venues = await db.select({ ownerUserId: venuesTable.ownerUserId }).from(venuesTable)
+      .where(isNotNull(venuesTable.ownerUserId));
+    if (!venues.length) return true;
+    const profiles = await db.select({ id: profilesTable.id }).from(profilesTable);
+    const ids = new Set(profiles.map((p) => p.id));
+    return venues.every((v) => v.ownerUserId === null || ids.has(v.ownerUserId));
+  });
+
+  // ─── Notifications Expanded ────────────────────────────────────────────────
+  console.log("\nNOTIFICATIONS EXPANDED");
+
+  await check("All notification types are from the valid expanded enum", async () => {
+    const { notificationsTable } = await import("@workspace/db");
+    const valid = new Set([
+      "payment_success", "match_joined", "match_confirmed", "final_payment_pending",
+      "booking_reminder", "match_cancelled", "badge_earned", "match_almost_full",
+      "final_payment_due", "wallet_refund_credited", "player_dropped_unpaid", "match_reopened",
+    ]);
+    const rows = await db.select({ type: notificationsTable.type }).from(notificationsTable);
+    return rows.every((n) => valid.has(n.type));
+  });
+
+  await check("All notifications reference existing users", async () => {
+    const { notificationsTable } = await import("@workspace/db");
+    const notes = await db.select({ userId: notificationsTable.userId }).from(notificationsTable);
+    if (!notes.length) return true;
+    const profiles = await db.select({ id: profilesTable.id }).from(profilesTable);
+    const ids = new Set(profiles.map((p) => p.id));
+    return notes.every((n) => ids.has(n.userId));
+  });
+
+  await check("All notifications have non-empty title and body", async () => {
+    const { notificationsTable } = await import("@workspace/db");
+    const rows = await db.select({ title: notificationsTable.title, body: notificationsTable.body }).from(notificationsTable);
+    return rows.every((n) => n.title.trim().length > 0 && n.body.trim().length > 0);
+  });
+
+  // ─── Referral Config ──────────────────────────────────────────────────────
+  console.log("\nREFERRAL CONFIG");
+
+  await check("At least 3 referral_config key-value rows exist", async () => {
+    const { referralConfigTable } = await import("@workspace/db");
+    const [row] = await db.select({ c: count() }).from(referralConfigTable);
+    return Number(row.c) >= 3;
+  });
+
+  await check("Referral config all values are positive", async () => {
+    const { referralConfigTable } = await import("@workspace/db");
+    const rows = await db.select({ v: referralConfigTable.value }).from(referralConfigTable);
+    if (!rows.length) return true;
+    return rows.every((r) => Number(r.v) > 0);
+  });
+
+  await check("Referral config signupBonusAmount key exists", async () => {
+    const { referralConfigTable } = await import("@workspace/db");
+    const rows = await db.select({ k: referralConfigTable.key })
+      .from(referralConfigTable)
+      .where(eq(referralConfigTable.key, "signupBonusAmount"));
+    return rows.length === 1;
+  });
+
+  await check("Referral config all keys are unique", async () => {
+    const { referralConfigTable } = await import("@workspace/db");
+    const rows = await db.select({ k: referralConfigTable.key }).from(referralConfigTable);
+    return rows.length === new Set(rows.map((r) => r.k)).size;
+  });
+
+  await check("All referral config rows have non-empty description", async () => {
+    const { referralConfigTable } = await import("@workspace/db");
+    const rows = await db.select({ d: referralConfigTable.description }).from(referralConfigTable);
+    return rows.every((r) => r.d && r.d.trim().length > 0);
+  });
+
+  // ─── Reward Events ────────────────────────────────────────────────────────
+  console.log("\nREWARD EVENTS");
+
+  await check("All reward events have positive amounts", async () => {
+    const { rewardEventsTable } = await import("@workspace/db");
+    const rows = await db.select({ amount: rewardEventsTable.amount }).from(rewardEventsTable);
+    return rows.every((r) => Number(r.amount) > 0);
+  });
+
+  await check("All reward events reference existing users", async () => {
+    const { rewardEventsTable } = await import("@workspace/db");
+    const events = await db.select({ userId: rewardEventsTable.userId }).from(rewardEventsTable);
+    if (!events.length) return true;
+    const profiles = await db.select({ id: profilesTable.id }).from(profilesTable);
+    const ids = new Set(profiles.map((p) => p.id));
+    return events.every((e) => ids.has(e.userId));
+  });
+
   // ─── Schema Integrity ─────────────────────────────────────────────────────
   console.log("\nSCHEMA INTEGRITY");
 

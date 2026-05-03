@@ -28,6 +28,7 @@ export const profilesTable = pgTable("profiles", {
     .notNull()
     .default("100"),
   isAdmin: boolean("is_admin").notNull().default(false),
+  isSuspended: boolean("is_suspended").notNull().default(false),
   referralCode: text("referral_code").unique(),
   referredBy: text("referred_by"),
   signupBonusPaid: boolean("signup_bonus_paid").notNull().default(false),

@@ -740,5 +740,236 @@ router.get("/admin/users/:userId/badges", requireAuth, async (req, res) => {
   }
 });
 
+// ─── Live Ops: Force Match Confirm ────────────────────────────────────────────
+
+router.post("/admin/matches/:matchId/force-confirm", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const matchId = req.params.matchId as string;
+    const [match] = await db.select().from(hostedMatchesTable).where(eq(hostedMatchesTable.id, matchId)).limit(1);
+    if (!match) { res.status(404).json({ error: "not_found", message: "Match not found" }); return; }
+
+    const [updated] = await db.update(hostedMatchesTable)
+      .set({ status: "confirmed", updatedAt: new Date() })
+      .where(eq(hostedMatchesTable.id, matchId))
+      .returning();
+
+    const { notificationsTable } = await import("@workspace/db");
+    const participants = await db.select({ userId: hostedMatchParticipantsTable.userId })
+      .from(hostedMatchParticipantsTable)
+      .where(eq(hostedMatchParticipantsTable.matchId, matchId));
+
+    if (participants.length > 0) {
+      await db.insert(notificationsTable).values(
+        participants.map((p) => ({
+          userId: p.userId,
+          type: "match_confirmed" as const,
+          title: "Match Confirmed",
+          body: "Admin has confirmed your match. Final payment will be due soon.",
+          referenceId: matchId,
+        })),
+      );
+    }
+
+    res.json({ matchId, status: updated.status, message: "Match force-confirmed by admin" });
+  } catch (err) {
+    req.log.error({ err }, "Error force-confirming match");
+    res.status(500).json({ error: "internal_error", message: "Failed to force-confirm match" });
+  }
+});
+
+// ─── Live Ops: Force Match Cancel ─────────────────────────────────────────────
+
+router.post("/admin/matches/:matchId/force-cancel", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const matchId = req.params.matchId as string;
+    const { reason } = req.body as { reason?: string };
+
+    const [match] = await db.select().from(hostedMatchesTable).where(eq(hostedMatchesTable.id, matchId)).limit(1);
+    if (!match) { res.status(404).json({ error: "not_found", message: "Match not found" }); return; }
+
+    await db.update(hostedMatchesTable)
+      .set({ status: "cancelled", cancelledReason: reason ?? "Cancelled by admin", updatedAt: new Date() })
+      .where(eq(hostedMatchesTable.id, matchId));
+
+    await db.update(hostedMatchParticipantsTable)
+      .set({ status: "cancelled" })
+      .where(and(
+        eq(hostedMatchParticipantsTable.matchId, matchId),
+        inArray(hostedMatchParticipantsTable.status, ["reserved", "final_paid"]),
+      ));
+
+    const { notificationsTable } = await import("@workspace/db");
+    const participants = await db.select({ userId: hostedMatchParticipantsTable.userId })
+      .from(hostedMatchParticipantsTable)
+      .where(eq(hostedMatchParticipantsTable.matchId, matchId));
+
+    if (participants.length > 0) {
+      await db.insert(notificationsTable).values(
+        participants.map((p) => ({
+          userId: p.userId,
+          type: "match_cancelled" as const,
+          title: "Match Cancelled",
+          body: reason ?? "This match has been cancelled by admin.",
+          referenceId: matchId,
+        })),
+      );
+    }
+
+    res.json({ matchId, status: "cancelled", message: "Match force-cancelled by admin" });
+  } catch (err) {
+    req.log.error({ err }, "Error force-cancelling match");
+    res.status(500).json({ error: "internal_error", message: "Failed to force-cancel match" });
+  }
+});
+
+// ─── Live Ops: Resend Final Payment Request ────────────────────────────────────
+
+router.post("/admin/matches/:matchId/resend-final-payment", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const matchId = req.params.matchId as string;
+    const [match] = await db.select().from(hostedMatchesTable).where(eq(hostedMatchesTable.id, matchId)).limit(1);
+    if (!match) { res.status(404).json({ error: "not_found", message: "Match not found" }); return; }
+
+    const reserved = await db.select({ userId: hostedMatchParticipantsTable.userId })
+      .from(hostedMatchParticipantsTable)
+      .where(and(
+        eq(hostedMatchParticipantsTable.matchId, matchId),
+        eq(hostedMatchParticipantsTable.status, "reserved"),
+      ));
+
+    if (!reserved.length) {
+      res.json({ notified: 0, message: "No reserved participants to notify" });
+      return;
+    }
+
+    const { notificationsTable } = await import("@workspace/db");
+    await db.insert(notificationsTable).values(
+      reserved.map((p) => ({
+        userId: p.userId,
+        type: "final_payment_due" as const,
+        title: "Final Payment Due",
+        body: `Your match is confirmed. Please pay the final amount to secure your spot.`,
+        referenceId: matchId,
+      })),
+    );
+
+    res.json({ notified: reserved.length, message: "Final payment reminders sent" });
+  } catch (err) {
+    req.log.error({ err }, "Error resending final payment");
+    res.status(500).json({ error: "internal_error", message: "Failed to resend final payment" });
+  }
+});
+
+// ─── Live Ops: Suspend / Unsuspend User ───────────────────────────────────────
+
+router.post("/admin/users/:userId/suspend", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const userId = req.params.userId as string;
+    const { suspended } = req.body as { suspended: boolean };
+
+    const [user] = await db.select({ id: profilesTable.id })
+      .from(profilesTable)
+      .where(eq(profilesTable.id, userId))
+      .limit(1);
+
+    if (!user) { res.status(404).json({ error: "not_found", message: "User not found" }); return; }
+    if (userId === admin.id) { res.status(400).json({ error: "invalid", message: "Cannot suspend yourself" }); return; }
+
+    const [updated] = await db.update(profilesTable)
+      .set({ isSuspended: !!suspended, updatedAt: new Date() })
+      .where(eq(profilesTable.id, userId))
+      .returning({ id: profilesTable.id, isSuspended: profilesTable.isSuspended });
+
+    res.json({ userId: updated.id, isSuspended: updated.isSuspended });
+  } catch (err) {
+    req.log.error({ err }, "Error suspending user");
+    res.status(500).json({ error: "internal_error", message: "Failed to suspend user" });
+  }
+});
+
+// ─── Live Ops: Set Venue Owner ─────────────────────────────────────────────────
+
+router.patch("/admin/venues/:venueId/set-owner", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const venueId = req.params.venueId as string;
+    const { ownerUserId } = req.body as { ownerUserId: string | null };
+
+    const [venue] = await db.select({ id: venuesTable.id })
+      .from(venuesTable)
+      .where(eq(venuesTable.id, venueId))
+      .limit(1);
+
+    if (!venue) { res.status(404).json({ error: "not_found", message: "Venue not found" }); return; }
+
+    const [updated] = await db.update(venuesTable)
+      .set({ ownerUserId: ownerUserId ?? null, updatedAt: new Date() })
+      .where(eq(venuesTable.id, venueId))
+      .returning({ id: venuesTable.id, ownerUserId: venuesTable.ownerUserId });
+
+    res.json({ venueId: updated.id, ownerUserId: updated.ownerUserId });
+  } catch (err) {
+    req.log.error({ err }, "Error setting venue owner");
+    res.status(500).json({ error: "internal_error", message: "Failed to set venue owner" });
+  }
+});
+
+// ─── Live Ops: All Matches (live list) ────────────────────────────────────────
+
+router.get("/admin/live-matches", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const matches = await db.select().from(hostedMatchesTable)
+      .orderBy(desc(hostedMatchesTable.createdAt))
+      .limit(100);
+
+    const participantCounts = await db.select({
+      matchId: hostedMatchParticipantsTable.matchId,
+      total: count(),
+    })
+      .from(hostedMatchParticipantsTable)
+      .groupBy(hostedMatchParticipantsTable.matchId);
+
+    const countByMatch = new Map(participantCounts.map((p) => [p.matchId, Number(p.total)]));
+
+    res.json(matches.map((m) => ({
+      id: m.id,
+      sport: m.sport,
+      date: m.date,
+      startTime: m.startTime,
+      endTime: m.endTime,
+      status: m.status,
+      currentPlayers: m.currentPlayers,
+      totalPlayers: m.totalPlayers,
+      minPlayers: m.minPlayers,
+      reserveFee: Number(m.reserveFee ?? 0),
+      finalFeePerPlayer: Number(m.finalFeePerPlayer ?? 0),
+      participantCount: countByMatch.get(m.id) ?? 0,
+      cancelledReason: m.cancelledReason ?? null,
+      lockDeadline: m.lockDeadline?.toISOString() ?? null,
+      createdAt: m.createdAt.toISOString(),
+    })));
+  } catch (err) {
+    req.log.error({ err }, "Error fetching live matches");
+    res.status(500).json({ error: "internal_error", message: "Failed to fetch live matches" });
+  }
+});
+
 export default router;
 

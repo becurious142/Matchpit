@@ -18,7 +18,7 @@ import { Redirect } from "wouter";
 import {
   CheckCircle, XCircle, Star, Users, Building2, TrendingUp,
   ClipboardList, Globe, BarChart3, Tag, IndianRupee, ToggleLeft,
-  ToggleRight, Plus
+  ToggleRight, Plus, Zap, ShieldAlert, Bell
 } from "lucide-react";
 
 interface City {
@@ -91,6 +91,14 @@ export default function Admin() {
   const [editableConfig, setEditableConfig] = useState<Record<string, string>>({});
   const [savingReferralConfig, setSavingReferralConfig] = useState(false);
 
+  // ── Live Ops state ─────────────────────────────────────────────────────────
+  const [liveMatches, setLiveMatches] = useState<any[]>([]);
+  const [liveMatchesLoading, setLiveMatchesLoading] = useState(false);
+  const [liveOpsMatchId, setLiveOpsMatchId] = useState("");
+  const [liveOpsUserId, setLiveOpsUserId] = useState("");
+  const [liveOpsReason, setLiveOpsReason] = useState("");
+  const [liveOpsAction, setLiveOpsAction] = useState<string | null>(null);
+
   useEffect(() => {
     if (!profile?.isAdmin) return;
     loadCities();
@@ -98,7 +106,16 @@ export default function Admin() {
     loadCoupons();
     loadMatchFinance();
     loadReferralConfig();
+    loadLiveMatches();
   }, [profile?.isAdmin]);
+
+  const loadLiveMatches = async () => {
+    setLiveMatchesLoading(true);
+    try {
+      const data = await adminFetch<any[]>("/admin/live-matches");
+      setLiveMatches(data);
+    } finally { setLiveMatchesLoading(false); }
+  };
 
   const loadCities = async () => {
     setCitiesLoading(true);
@@ -332,6 +349,9 @@ export default function Admin() {
           </TabsTrigger>
           <TabsTrigger value="referral" className="font-bold uppercase tracking-wider text-xs">
             <TrendingUp className="w-3 h-3 mr-1" /> Referral
+          </TabsTrigger>
+          <TabsTrigger value="liveops" className="font-bold uppercase tracking-wider text-xs">
+            <Zap className="w-3 h-3 mr-1" /> Live Ops
           </TabsTrigger>
         </TabsList>
 
@@ -845,6 +865,272 @@ export default function Admin() {
                 </CardContent>
               </Card>
             )}
+          </div>
+        </TabsContent>
+
+        {/* ── Live Ops tab ────────────────────────────────────────────────────── */}
+        <TabsContent value="liveops">
+          <div className="space-y-8">
+            <div>
+              <h2 className="text-xl font-bold uppercase italic mb-1">Live <span className="text-primary">Ops</span></h2>
+              <p className="text-sm text-muted-foreground">Force match state transitions, suspend users, and trigger cron jobs.</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Force Confirm */}
+              <Card className="bg-card/50 border-border/50">
+                <CardContent className="p-5 space-y-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <CheckCircle className="w-4 h-4 text-primary" />
+                    <h3 className="font-bold uppercase text-sm">Force Confirm Match</h3>
+                  </div>
+                  <Input
+                    placeholder="Match ID (UUID)"
+                    value={liveOpsMatchId}
+                    onChange={(e) => setLiveOpsMatchId(e.target.value)}
+                    className="h-9 font-mono text-xs"
+                  />
+                  <Button
+                    size="sm"
+                    className="w-full font-bold uppercase"
+                    disabled={!liveOpsMatchId || liveOpsAction === "confirm"}
+                    onClick={async () => {
+                      setLiveOpsAction("confirm");
+                      try {
+                        await adminFetch(`/admin/matches/${liveOpsMatchId}/force-confirm`, { method: "POST" });
+                        toast({ title: "Match force-confirmed" });
+                        loadLiveMatches();
+                      } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
+                      finally { setLiveOpsAction(null); }
+                    }}
+                  >
+                    {liveOpsAction === "confirm" ? "Confirming..." : "Force Confirm"}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* Force Cancel */}
+              <Card className="bg-card/50 border-border/50">
+                <CardContent className="p-5 space-y-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <XCircle className="w-4 h-4 text-destructive" />
+                    <h3 className="font-bold uppercase text-sm">Force Cancel Match</h3>
+                  </div>
+                  <Input
+                    placeholder="Match ID (UUID)"
+                    value={liveOpsMatchId}
+                    onChange={(e) => setLiveOpsMatchId(e.target.value)}
+                    className="h-9 font-mono text-xs"
+                  />
+                  <Input
+                    placeholder="Reason (optional)"
+                    value={liveOpsReason}
+                    onChange={(e) => setLiveOpsReason(e.target.value)}
+                    className="h-9 text-xs"
+                  />
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="w-full font-bold uppercase"
+                    disabled={!liveOpsMatchId || liveOpsAction === "cancel"}
+                    onClick={async () => {
+                      setLiveOpsAction("cancel");
+                      try {
+                        await adminFetch(`/admin/matches/${liveOpsMatchId}/force-cancel`, {
+                          method: "POST",
+                          body: JSON.stringify({ reason: liveOpsReason || undefined }),
+                        });
+                        toast({ title: "Match force-cancelled" });
+                        loadLiveMatches();
+                      } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
+                      finally { setLiveOpsAction(null); }
+                    }}
+                  >
+                    {liveOpsAction === "cancel" ? "Cancelling..." : "Force Cancel"}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* Resend Final Payment */}
+              <Card className="bg-card/50 border-border/50">
+                <CardContent className="p-5 space-y-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Bell className="w-4 h-4 text-yellow-500" />
+                    <h3 className="font-bold uppercase text-sm">Resend Final Payment</h3>
+                  </div>
+                  <Input
+                    placeholder="Match ID (UUID)"
+                    value={liveOpsMatchId}
+                    onChange={(e) => setLiveOpsMatchId(e.target.value)}
+                    className="h-9 font-mono text-xs"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full font-bold uppercase border-yellow-500/30 text-yellow-500 hover:bg-yellow-500/5"
+                    disabled={!liveOpsMatchId || liveOpsAction === "resend"}
+                    onClick={async () => {
+                      setLiveOpsAction("resend");
+                      try {
+                        const r = await adminFetch<{ notified: number }>(`/admin/matches/${liveOpsMatchId}/resend-final-payment`, { method: "POST" });
+                        toast({ title: `Notified ${r.notified} players` });
+                      } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
+                      finally { setLiveOpsAction(null); }
+                    }}
+                  >
+                    {liveOpsAction === "resend" ? "Sending..." : "Resend Reminder"}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* Suspend / Unsuspend User */}
+              <Card className="bg-card/50 border-border/50">
+                <CardContent className="p-5 space-y-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <ShieldAlert className="w-4 h-4 text-destructive" />
+                    <h3 className="font-bold uppercase text-sm">Suspend User</h3>
+                  </div>
+                  <Input
+                    placeholder="User ID (UUID)"
+                    value={liveOpsUserId}
+                    onChange={(e) => setLiveOpsUserId(e.target.value)}
+                    className="h-9 font-mono text-xs"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="flex-1 font-bold uppercase"
+                      disabled={!liveOpsUserId || liveOpsAction === "suspend"}
+                      onClick={async () => {
+                        setLiveOpsAction("suspend");
+                        try {
+                          await adminFetch(`/admin/users/${liveOpsUserId}/suspend`, {
+                            method: "POST",
+                            body: JSON.stringify({ suspended: true }),
+                          });
+                          toast({ title: "User suspended" });
+                        } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
+                        finally { setLiveOpsAction(null); }
+                      }}
+                    >
+                      Suspend
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1 font-bold uppercase"
+                      disabled={!liveOpsUserId || liveOpsAction === "unsuspend"}
+                      onClick={async () => {
+                        setLiveOpsAction("unsuspend");
+                        try {
+                          await adminFetch(`/admin/users/${liveOpsUserId}/suspend`, {
+                            method: "POST",
+                            body: JSON.stringify({ suspended: false }),
+                          });
+                          toast({ title: "User unsuspended" });
+                        } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
+                        finally { setLiveOpsAction(null); }
+                      }}
+                    >
+                      Unsuspend
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Cron Triggers */}
+              <Card className="bg-card/50 border-border/50 md:col-span-2">
+                <CardContent className="p-5">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Zap className="w-4 h-4 text-primary" />
+                    <h3 className="font-bold uppercase text-sm">Cron Triggers</h3>
+                  </div>
+                  <div className="flex gap-3 flex-wrap">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="font-bold uppercase"
+                      disabled={liveOpsAction === "underfill"}
+                      onClick={async () => {
+                        setLiveOpsAction("underfill");
+                        try {
+                          const r = await adminFetch<any>("/admin/cron/underfill", { method: "POST" });
+                          toast({ title: `Underfill cron: ${r.cancelled ?? 0} matches cancelled` });
+                        } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
+                        finally { setLiveOpsAction(null); }
+                      }}
+                    >
+                      {liveOpsAction === "underfill" ? "Running..." : "Run Underfill Cron"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="font-bold uppercase"
+                      disabled={liveOpsAction === "dropunpaid"}
+                      onClick={async () => {
+                        setLiveOpsAction("dropunpaid");
+                        try {
+                          const r = await adminFetch<any>("/admin/cron/drop-unpaid", { method: "POST" });
+                          toast({ title: `Drop-unpaid cron: ${r.dropped ?? 0} dropped` });
+                        } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
+                        finally { setLiveOpsAction(null); }
+                      }}
+                    >
+                      {liveOpsAction === "dropunpaid" ? "Running..." : "Run Drop-Unpaid Cron"}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Live Matches Table */}
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold uppercase text-sm">All Matches ({liveMatches.length})</h3>
+                <Button size="sm" variant="outline" className="h-7 text-xs font-bold uppercase" onClick={loadLiveMatches}>
+                  Refresh
+                </Button>
+              </div>
+              <div className="rounded-lg border border-border/50 overflow-hidden bg-card/30">
+                <Table>
+                  <TableHeader className="bg-muted/60">
+                    <TableRow>
+                      <TableHead>Sport</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Players</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Reserve Fee</TableHead>
+                      <TableHead>ID</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {liveMatchesLoading ? (
+                      <TableRow><TableCell colSpan={6} className="text-center py-8"><Skeleton className="h-8 w-full" /></TableCell></TableRow>
+                    ) : liveMatches.length === 0 ? (
+                      <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground">No matches yet.</TableCell></TableRow>
+                    ) : liveMatches.slice(0, 30).map((m) => (
+                      <TableRow key={m.id} className="cursor-pointer hover:bg-muted/20"
+                        onClick={() => setLiveOpsMatchId(m.id)}>
+                        <TableCell><Badge variant="outline" className="text-[10px] font-bold uppercase">{m.sport}</Badge></TableCell>
+                        <TableCell className="text-sm">{m.date}</TableCell>
+                        <TableCell className="font-mono text-sm">{m.currentPlayers}/{m.totalPlayers}</TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={m.status === "confirmed" ? "default" : m.status === "cancelled" ? "destructive" : "secondary"}
+                            className={`text-[10px] font-bold uppercase ${m.status === "confirmed" ? "bg-primary text-black" : ""}`}
+                          >
+                            {m.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono">₹{m.reserveFee}</TableCell>
+                        <TableCell className="font-mono text-[10px] text-muted-foreground max-w-[120px] truncate">{m.id}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
           </div>
         </TabsContent>
 

@@ -712,5 +712,132 @@ router.post("/:matchId/cancel", requireAuth, async (req, res) => {
   }
 });
 
+router.post("/hosted-matches/:matchId/nudge-unpaid", requireAuth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const profile = await getProfileByClerkId(userId!);
+    if (!profile) { res.status(404).json({ error: "not_found", message: "Profile not found" }); return; }
+
+    const matchId = req.params.matchId as string;
+    const [match] = await db.select().from(hostedMatchesTable).where(eq(hostedMatchesTable.id, matchId)).limit(1);
+    if (!match) { res.status(404).json({ error: "not_found", message: "Match not found" }); return; }
+    if (match.hostUserId !== profile.id) { res.status(403).json({ error: "forbidden", message: "Not the host" }); return; }
+
+    const reserved = await db.select({ userId: hostedMatchParticipantsTable.userId })
+      .from(hostedMatchParticipantsTable)
+      .where(and(eq(hostedMatchParticipantsTable.matchId, matchId), eq(hostedMatchParticipantsTable.status, "reserved")));
+
+    if (!reserved.length) {
+      res.json({ notified: 0, message: "No reserved participants to nudge" });
+      return;
+    }
+
+    await db.insert(notificationsTable).values(
+      reserved.map((p) => ({
+        userId: p.userId,
+        type: "final_payment_due" as const,
+        title: "Final Payment Reminder",
+        body: "Your host is reminding you to complete your payment to secure your spot in the match.",
+        referenceId: matchId,
+      })),
+    );
+
+    res.json({ notified: reserved.length, message: "Nudge notifications sent" });
+  } catch (err) {
+    req.log.error({ err }, "Error nudging unpaid participants");
+    res.status(500).json({ error: "internal_error", message: "Failed to nudge participants" });
+  }
+});
+
+router.get("/hosted-matches/:matchId/finance", requireAuth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const profile = await getProfileByClerkId(userId!);
+    if (!profile) { res.status(404).json({ error: "not_found", message: "Profile not found" }); return; }
+
+    const matchId = req.params.matchId as string;
+    const [match] = await db.select().from(hostedMatchesTable).where(eq(hostedMatchesTable.id, matchId)).limit(1);
+    if (!match) { res.status(404).json({ error: "not_found", message: "Match not found" }); return; }
+    if (match.hostUserId !== profile.id && !profile.isAdmin) { res.status(403).json({ error: "forbidden", message: "Access denied" }); return; }
+
+    const payments = await db.select().from(paymentsTable)
+      .where(and(eq(paymentsTable.referenceId, matchId), eq(paymentsTable.status, "success")));
+
+    const reservePayments = payments.filter((p) => p.type === "match_reserve" || p.type === "host_commitment");
+    const finalPayments = payments.filter((p) => p.type === "match_final");
+
+    const reserveCollected = reservePayments.reduce((s, p) => s + Number(p.amount), 0);
+    const finalCollected = finalPayments.reduce((s, p) => s + Number(p.amount), 0);
+
+    const participants = await db.select({ status: hostedMatchParticipantsTable.status })
+      .from(hostedMatchParticipantsTable)
+      .where(eq(hostedMatchParticipantsTable.matchId, matchId as string));
+
+    const reserved = participants.filter((p) => p.status === "reserved").length;
+    const finalPaid = participants.filter((p) => p.status === "final_paid").length;
+    const cancelled = participants.filter((p) => p.status === "cancelled").length;
+    const dropped = participants.filter((p) => p.status === "dropped_unpaid").length;
+
+    res.json({
+      matchId,
+      reserveCollected,
+      finalCollected,
+      totalRevenue: reserveCollected + finalCollected,
+      reservedCount: reserved,
+      finalPaidCount: finalPaid,
+      cancelledCount: cancelled,
+      droppedCount: dropped,
+      currentPlayers: match.currentPlayers,
+      totalPlayers: match.totalPlayers,
+      minPlayers: match.minPlayers,
+      status: match.status,
+    });
+  } catch (err) {
+    req.log.error({ err }, "Error fetching match finance");
+    res.status(500).json({ error: "internal_error", message: "Failed to fetch match finance" });
+  }
+});
+
+router.post("/hosted-matches/:matchId/rehost", requireAuth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const profile = await getProfileByClerkId(userId!);
+    if (!profile) { res.status(404).json({ error: "not_found", message: "Profile not found" }); return; }
+
+    const matchId = req.params.matchId as string;
+    const [match] = await db.select().from(hostedMatchesTable).where(eq(hostedMatchesTable.id, matchId)).limit(1);
+    if (!match) { res.status(404).json({ error: "not_found", message: "Match not found" }); return; }
+    if (match.hostUserId !== profile.id) { res.status(403).json({ error: "forbidden", message: "Not the host" }); return; }
+
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 7);
+    const newDate = tomorrow.toISOString().slice(0, 10);
+
+    const [newMatch] = await db.insert(hostedMatchesTable).values({
+      hostUserId: profile.id,
+      venueId: match.venueId,
+      slotId: match.slotId,
+      sport: match.sport,
+      date: newDate,
+      startTime: match.startTime,
+      endTime: match.endTime,
+      totalPlayers: match.totalPlayers,
+      minPlayers: match.minPlayers,
+      currentPlayers: 0,
+      reserveFee: match.reserveFee,
+      finalFeePerPlayer: match.finalFeePerPlayer,
+      totalVenueCost: match.totalVenueCost,
+      skillLevel: match.skillLevel,
+      notes: match.notes ? `[Rehosted] ${match.notes}` : "Rehosted match",
+      status: "open",
+    }).returning({ id: hostedMatchesTable.id });
+
+    res.json({ matchId: newMatch.id, date: newDate, message: "New match created from rehost" });
+  } catch (err) {
+    req.log.error({ err }, "Error rehosting match");
+    res.status(500).json({ error: "internal_error", message: "Failed to rehost match" });
+  }
+});
+
 export default router;
 

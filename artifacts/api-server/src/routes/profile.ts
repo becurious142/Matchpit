@@ -1,12 +1,13 @@
 import { Router, type IRouter } from "express";
 import { getAuth } from "@clerk/express";
 import { db } from "@workspace/db";
-import { profilesTable } from "@workspace/db";
+import { profilesTable, userStatsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { requireAuth, getOrCreateProfile } from "../lib/auth";
+import { requireAuth, getOrCreateProfile, getProfileByClerkId } from "../lib/auth";
 import { processSignupBonus } from "../lib/wallet";
 import { attributeReferral } from "../lib/referral";
 import { computeAndAwardBadges, getUserBadges } from "../lib/badges";
+import { getUserStats } from "../lib/trust";
 
 const router: IRouter = Router();
 
@@ -25,6 +26,7 @@ function formatProfile(p: typeof profilesTable.$inferSelect) {
     badgeCount: p.badgeCount,
     trustScore: Number(p.trustScore),
     isAdmin: p.isAdmin,
+    isSuspended: p.isSuspended,
     referralCode: p.referralCode ?? null,
     referredBy: p.referredBy ?? null,
     createdAt: p.createdAt.toISOString(),
@@ -186,6 +188,22 @@ router.get("/profile/badges", requireAuth, async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Error fetching badges");
     res.status(500).json({ error: "internal_error", message: "Failed to fetch badges" });
+  }
+});
+
+router.get("/profile/stats", requireAuth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const profile = await getProfileByClerkId(userId!);
+    if (!profile) {
+      res.status(404).json({ error: "not_found", message: "Profile not found" });
+      return;
+    }
+    const stats = await getUserStats(profile.id);
+    res.json({ ...stats, trustScore: Number(profile.trustScore) });
+  } catch (err) {
+    req.log.error({ err }, "Error fetching player stats");
+    res.status(500).json({ error: "internal_error", message: "Failed to fetch stats" });
   }
 });
 

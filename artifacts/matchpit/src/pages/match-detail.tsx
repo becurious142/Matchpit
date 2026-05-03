@@ -1,7 +1,7 @@
 import { useParams, useLocation } from "wouter";
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { useGetHostedMatch, useJoinHostedMatch, useCreatePaymentOrder, useVerifyPayment } from "@workspace/api-client-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useGetHostedMatch, useJoinHostedMatch, useCreatePaymentOrder, useVerifyPayment, useGetMyProfile } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,10 +9,20 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
-import { Calendar, Clock, MapPin, Trophy, Users, ShieldCheck, UserPlus } from "lucide-react";
+import { Calendar, Clock, MapPin, Trophy, Users, ShieldCheck, UserPlus, Share2, Bell, RefreshCw, XCircle, IndianRupee } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { loadRazorpay } from "@/lib/razorpay";
 import { useUser } from "@clerk/react";
+import { ShareModal } from "@/components/ShareModal";
+
+async function matchFetch<T>(path: string, opts?: RequestInit): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(opts?.headers ?? {}) },
+  });
+  if (!res.ok) throw new Error((await res.json()).message ?? "Request failed");
+  return res.json();
+}
 
 export default function MatchDetail() {
   const { id } = useParams<{ id: string }>();
@@ -21,37 +31,42 @@ export default function MatchDetail() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showShare, setShowShare] = useState(false);
+  const [nudging, setNudging] = useState(false);
+  const [rehosting, setRehosting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   const { data: matchDetail, isLoading, refetch } = useGetHostedMatch(id!);
+  const { data: profile } = useGetMyProfile();
   const joinMatch = useJoinHostedMatch();
   const createPaymentOrder = useCreatePaymentOrder();
   const verifyPayment = useVerifyPayment();
 
+  const { data: hostFinance } = useQuery<any>({
+    queryKey: ["host-finance", id],
+    queryFn: () => matchFetch(`/hosted-matches/${id}/finance`),
+    enabled: !!matchDetail && !!profile && profile.id === matchDetail.hostUserId,
+    retry: false,
+  });
+
+  const isHost = !!profile && !!matchDetail && profile.id === matchDetail.hostUserId;
+
   const handleJoin = async () => {
     if (!user) {
-      // Must be logged in
       toast({ title: "Sign in required", description: "You must be signed in to join a match." });
       return;
     }
-    
     if (!matchDetail) return;
 
     setIsProcessing(true);
     try {
-      // 1. Create order
       const order = await createPaymentOrder.mutateAsync({
-        data: {
-          type: "match_reserve",
-          referenceId: id!,
-          amount: matchDetail.reserveFee
-        }
+        data: { type: "match_reserve", referenceId: id!, amount: matchDetail.reserveFee }
       });
 
-      // 2. Load razorpay
       const isLoaded = await loadRazorpay();
       if (!isLoaded) throw new Error("Razorpay SDK failed to load");
 
-      // 3. Open checkout
       const options = {
         key: order.razorpayKeyId,
         amount: order.amount,
@@ -59,15 +74,10 @@ export default function MatchDetail() {
         name: "MATCHPIT",
         description: `Join Match: ${matchDetail.venue?.name}`,
         order_id: order.orderId,
-        prefill: {
-          name: order.prefillName || "",
-          email: order.prefillEmail || "",
-          contact: order.prefillContact || ""
-        },
+        prefill: { name: order.prefillName || "", email: order.prefillEmail || "", contact: order.prefillContact || "" },
         theme: { color: "#84cc16" },
         handler: async function (response: any) {
           try {
-            // 4. Verify payment
             await verifyPayment.mutateAsync({
               data: {
                 razorpayOrderId: response.razorpay_order_id,
@@ -77,18 +87,10 @@ export default function MatchDetail() {
                 referenceId: id!
               }
             });
-
-            // 5. Join match (payment was already verified above)
             await joinMatch.mutateAsync({ matchId: id! });
-
-            // Invalidate stale queries so match detail + matches list reflect new state
             await queryClient.invalidateQueries({ queryKey: ["getHostedMatch", id] });
             await queryClient.invalidateQueries({ queryKey: ["listHostedMatches"] });
-
-            toast({
-              title: "You're in! 🎉",
-              description: "You've successfully joined the match.",
-            });
+            toast({ title: "You're in!", description: "You've successfully joined the match." });
             refetch();
           } catch (err: any) {
             toast({ title: "Failed", description: err.message, variant: "destructive" });
@@ -104,11 +106,43 @@ export default function MatchDetail() {
         toast({ title: "Payment Failed", description: response.error.description, variant: "destructive" });
       });
       rzp.open();
-
     } catch (err: any) {
       setIsProcessing(false);
       toast({ title: "Error", description: err.message, variant: "destructive" });
     }
+  };
+
+  const handleNudge = async () => {
+    setNudging(true);
+    try {
+      const result = await matchFetch<{ notified: number }>(`/hosted-matches/${id}/nudge-unpaid`, { method: "POST" });
+      toast({ title: `Nudged ${result.notified} player${result.notified === 1 ? "" : "s"}`, description: "They've been notified to complete payment." });
+    } catch (err: any) {
+      toast({ title: err.message, variant: "destructive" });
+    } finally { setNudging(false); }
+  };
+
+  const handleRehost = async () => {
+    setRehosting(true);
+    try {
+      const result = await matchFetch<{ matchId: string }>(`/hosted-matches/${id}/rehost`, { method: "POST" });
+      toast({ title: "New match created!", description: "Redirecting to your new match..." });
+      setLocation(`/matches/${result.matchId}`);
+    } catch (err: any) {
+      toast({ title: err.message, variant: "destructive" });
+    } finally { setRehosting(false); }
+  };
+
+  const handleCancelMatch = async () => {
+    if (!confirm("Are you sure you want to cancel this match? All participants will be refunded.")) return;
+    setCancelling(true);
+    try {
+      await matchFetch(`/hosted-matches/${id}/cancel`, { method: "POST", body: JSON.stringify({ reason: "Host cancelled the match" }) });
+      toast({ title: "Match cancelled", description: "All participants have been notified." });
+      refetch();
+    } catch (err: any) {
+      toast({ title: err.message, variant: "destructive" });
+    } finally { setCancelling(false); }
   };
 
   if (isLoading) {
@@ -124,30 +158,50 @@ export default function MatchDetail() {
 
   const isFull = matchDetail.spotsLeft <= 0;
   const progress = (matchDetail.currentPlayers / matchDetail.totalPlayers) * 100;
-  const isHost = user?.id === matchDetail.hostUserId; // Note: hostUserId is internal ID, not clerk ID, but for UI approximation this is fine. Actual protection is on backend.
+  const almostFull = progress >= 80;
 
   return (
     <div className="min-h-screen pb-20">
+      {showShare && (
+        <ShareModal
+          matchId={id!}
+          sport={matchDetail.sport}
+          venueName={matchDetail.venue?.name ?? ""}
+          date={matchDetail.date}
+          spotsLeft={matchDetail.spotsLeft}
+          reserveFee={matchDetail.reserveFee}
+          onClose={() => setShowShare(false)}
+        />
+      )}
+
       {/* Hero */}
       <div className="relative h-[30vh] md:h-[40vh] w-full bg-muted">
         {matchDetail.venue?.coverImage ? (
           <img src={matchDetail.venue.coverImage} alt={matchDetail.venue.name} className="w-full h-full object-cover" />
         ) : (
-          <img src={`/venues/venue1.png`} alt="Venue" className="w-full h-full object-cover" />
+          <img src="/venues/venue1.png" alt="Venue" className="w-full h-full object-cover" />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-background via-background/50 to-transparent" />
-        
+
         <div className="absolute top-4 left-4 flex gap-2">
           <Badge className="bg-primary text-black font-bold uppercase">{matchDetail.sport}</Badge>
           <Badge variant={matchDetail.status === 'open' ? 'secondary' : 'default'} className="uppercase font-bold">
             {matchDetail.status}
           </Badge>
+          {almostFull && <Badge className="bg-orange-500 text-white font-bold uppercase animate-pulse">Almost Full!</Badge>}
         </div>
+
+        <button
+          onClick={() => setShowShare(true)}
+          className="absolute top-4 right-4 p-2 rounded-full bg-black/50 backdrop-blur text-white hover:bg-black/70 transition-colors"
+        >
+          <Share2 className="w-5 h-5" />
+        </button>
       </div>
 
       <div className="container mx-auto px-4 -mt-16 relative z-10">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
+
           {/* Main Info */}
           <div className="lg:col-span-2 space-y-6">
             <Card className="bg-card/80 backdrop-blur-md border-border/50 shadow-xl">
@@ -162,20 +216,23 @@ export default function MatchDetail() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6 py-6 border-y border-border/50">
                   <div className="flex flex-col">
                     <span className="text-xs uppercase font-bold text-muted-foreground mb-1">Date</span>
-                    <span className="font-bold flex items-center gap-2"><Calendar className="w-4 h-4 text-primary"/> {format(parseISO(matchDetail.date), 'MMM d, yyyy')}</span>
+                    <span className="font-bold flex items-center gap-2"><Calendar className="w-4 h-4 text-primary" /> {format(parseISO(matchDetail.date), 'MMM d, yyyy')}</span>
                   </div>
                   <div className="flex flex-col">
                     <span className="text-xs uppercase font-bold text-muted-foreground mb-1">Time</span>
-                    <span className="font-bold flex items-center gap-2"><Clock className="w-4 h-4 text-primary"/> {matchDetail.startTime}</span>
+                    <span className="font-bold flex items-center gap-2"><Clock className="w-4 h-4 text-primary" /> {matchDetail.startTime}</span>
                   </div>
                   <div className="flex flex-col">
                     <span className="text-xs uppercase font-bold text-muted-foreground mb-1">Level</span>
-                    <span className="font-bold capitalize flex items-center gap-2"><Trophy className="w-4 h-4 text-primary"/> {matchDetail.skillLevel}</span>
+                    <span className="font-bold capitalize flex items-center gap-2"><Trophy className="w-4 h-4 text-primary" /> {matchDetail.skillLevel}</span>
                   </div>
                   <div className="flex flex-col">
                     <span className="text-xs uppercase font-bold text-muted-foreground mb-1">Host</span>
                     <span className="font-bold flex items-center gap-2">
-                      <Avatar className="w-6 h-6"><AvatarImage src={matchDetail.host?.avatarUrl || ""} /><AvatarFallback>{matchDetail.host?.fullName?.charAt(0) || "H"}</AvatarFallback></Avatar>
+                      <Avatar className="w-6 h-6">
+                        <AvatarImage src={matchDetail.host?.avatarUrl || ""} />
+                        <AvatarFallback>{matchDetail.host?.fullName?.charAt(0) || "H"}</AvatarFallback>
+                      </Avatar>
                       {matchDetail.host?.fullName?.split(' ')[0] || "Host"}
                     </span>
                   </div>
@@ -198,17 +255,24 @@ export default function MatchDetail() {
                     <h2 className="text-xl font-bold uppercase italic">The <span className="text-primary">Squad</span></h2>
                     <p className="text-sm text-muted-foreground">{matchDetail.currentPlayers} / {matchDetail.totalPlayers} Players Joined</p>
                   </div>
-                  <Badge variant="outline" className="font-bold border-primary text-primary">
-                    {matchDetail.minPlayers} needed to confirm
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="font-bold border-primary text-primary">
+                      {matchDetail.minPlayers} needed to confirm
+                    </Badge>
+                    <button
+                      onClick={() => setShowShare(true)}
+                      className="flex items-center gap-1 text-xs font-bold text-primary hover:underline"
+                    >
+                      <Share2 className="w-3 h-3" /> Invite
+                    </button>
+                  </div>
                 </div>
 
                 <Progress value={progress} className="h-2 mb-8" />
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                  {/* Actual participants */}
                   {matchDetail.participants.map((p) => (
-                    <div key={p.id} className="flex flex-col items-center p-4 bg-muted/20 rounded-xl border border-border/50 relative overflow-hidden group">
+                    <div key={p.id} className="flex flex-col items-center p-4 bg-muted/20 rounded-xl border border-border/50 relative overflow-hidden">
                       {p.user?.id === matchDetail.hostUserId && (
                         <div className="absolute top-0 w-full bg-primary text-black text-[9px] font-bold text-center uppercase tracking-wider py-0.5">Host</div>
                       )}
@@ -222,10 +286,11 @@ export default function MatchDetail() {
                       {p.status === 'final_paid' && (
                         <Badge className="mt-2 text-[9px] h-4 px-1 bg-green-500/20 text-green-500 border-none">Paid Full</Badge>
                       )}
+                      {p.status === 'reserved' && (
+                        <Badge className="mt-2 text-[9px] h-4 px-1 bg-yellow-500/20 text-yellow-500 border-none">Reserved</Badge>
+                      )}
                     </div>
                   ))}
-
-                  {/* Empty spots */}
                   {Array.from({ length: matchDetail.spotsLeft }).map((_, i) => (
                     <div key={`empty-${i}`} className="flex flex-col items-center justify-center p-4 border border-dashed border-border rounded-xl opacity-50 bg-background">
                       <div className="w-14 h-14 rounded-full border-2 border-dashed border-muted-foreground flex items-center justify-center mb-3">
@@ -237,6 +302,69 @@ export default function MatchDetail() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Host Control Center */}
+            {isHost && (
+              <Card className="bg-card border-2 border-primary/30">
+                <CardContent className="p-6">
+                  <h2 className="text-xl font-bold uppercase italic mb-1">Host <span className="text-primary">Control Center</span></h2>
+                  <p className="text-sm text-muted-foreground mb-6">Manage your match as the host.</p>
+
+                  {hostFinance && (
+                    <div className="grid grid-cols-3 gap-3 mb-6 p-4 rounded-lg bg-muted/30 border border-border/50">
+                      <div className="text-center">
+                        <p className="text-xs uppercase font-bold text-muted-foreground mb-1">Reserve Collected</p>
+                        <p className="text-xl font-extrabold text-primary">₹{hostFinance.reserveCollected ?? 0}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-xs uppercase font-bold text-muted-foreground mb-1">Final Collected</p>
+                        <p className="text-xl font-extrabold">₹{hostFinance.finalCollected ?? 0}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-xs uppercase font-bold text-muted-foreground mb-1">Total Revenue</p>
+                        <p className="text-xl font-extrabold text-green-500">₹{hostFinance.totalRevenue ?? 0}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <Button
+                      variant="outline"
+                      className="h-12 font-bold border-primary/30 hover:bg-primary/5"
+                      onClick={() => setShowShare(true)}
+                    >
+                      <Share2 className="w-4 h-4 mr-2" /> Share & Fill
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="h-12 font-bold border-yellow-500/30 text-yellow-500 hover:bg-yellow-500/5"
+                      onClick={handleNudge}
+                      disabled={nudging}
+                    >
+                      <Bell className="w-4 h-4 mr-2" /> {nudging ? "Nudging..." : "Nudge Unpaid"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="h-12 font-bold border-blue-500/30 text-blue-500 hover:bg-blue-500/5"
+                      onClick={handleRehost}
+                      disabled={rehosting}
+                    >
+                      <RefreshCw className="w-4 h-4 mr-2" /> {rehosting ? "Creating..." : "Rehost"}
+                    </Button>
+                    {matchDetail.status !== 'cancelled' && (
+                      <Button
+                        variant="outline"
+                        className="h-12 font-bold border-destructive/30 text-destructive hover:bg-destructive/5 col-span-2 sm:col-span-1"
+                        onClick={handleCancelMatch}
+                        disabled={cancelling}
+                      >
+                        <XCircle className="w-4 h-4 mr-2" /> {cancelling ? "Cancelling..." : "Cancel Match"}
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* Action Sidebar */}
@@ -262,6 +390,14 @@ export default function MatchDetail() {
                     <ShieldCheck className="w-8 h-8 text-green-500 mx-auto mb-2" />
                     <h3 className="font-bold text-green-500 uppercase tracking-wider">You're in!</h3>
                     <p className="text-sm text-green-500/80 mt-1">See you on the pitch.</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-3 w-full border-green-500/30 text-green-500 hover:bg-green-500/10"
+                      onClick={() => setShowShare(true)}
+                    >
+                      <Share2 className="w-3 h-3 mr-1" /> Invite Friends
+                    </Button>
                   </div>
                 ) : isFull ? (
                   <Button className="w-full h-14 text-lg font-bold uppercase italic" disabled variant="secondary">
@@ -272,8 +408,8 @@ export default function MatchDetail() {
                     Match {matchDetail.status}
                   </Button>
                 ) : (
-                  <Button 
-                    className="w-full h-14 text-lg font-bold uppercase italic shadow-lg shadow-primary/20" 
+                  <Button
+                    className="w-full h-14 text-lg font-bold uppercase italic shadow-lg shadow-primary/20"
                     onClick={handleJoin}
                     disabled={isProcessing}
                   >
@@ -286,11 +422,18 @@ export default function MatchDetail() {
                     <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center shrink-0">🛡️</div>
                     <p>Protected by Matchpit. Refunds guaranteed if match cancels.</p>
                   </div>
+                  {!matchDetail.isUserJoined && matchDetail.status === 'open' && (
+                    <button
+                      onClick={() => setShowShare(true)}
+                      className="w-full flex items-center justify-center gap-2 text-xs font-bold text-muted-foreground hover:text-foreground transition-colors py-2 border border-dashed border-border/50 rounded-lg"
+                    >
+                      <Share2 className="w-3 h-3" /> Share this match
+                    </button>
+                  )}
                 </div>
               </CardContent>
             </Card>
           </div>
-
         </div>
       </div>
     </div>

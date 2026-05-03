@@ -1,0 +1,159 @@
+You have completed core commerce/accounting infrastructure, but MATCHPIT is still not consumer-live complete.
+
+I need PHASE 3 FULL PRODUCT LOOP COMPLETION.
+
+Read this carefully: do not do isolated patches. Build all systems cohesively across backend, database, admin, and frontend so the app behaves like a real marketplace launch product.
+
+========================
+A. HOSTED MATCH AUTOMATION COMPLETION
+
+Build complete hosted match lifecycle automation after reserve joins:
+
+Notification event engine:
+in-app notifications table + APIs
+events for:
+match almost full
+match confirmed
+final payment due
+final payment overdue
+player dropped unpaid
+match cancelled underfilled
+wallet refund credited
+WhatsApp/share templates:
+generate prefilled WhatsApp invite message with join link
+host can copy/share from match lobby
+player can also invite friends
+Waitlist/refill engine:
+if confirmed match loses unpaid players or cancellations, reopen spots
+expose "spots reopened" badge
+allow refill joins before a cutoff
+finance logic must preserve venue payout safety
+========================
+B. HOST CONTROL CENTER
+
+Create a dedicated host dashboard inside hosted match detail:
+
+joined players list
+reserve paid / final paid indicators
+copy invite link
+WhatsApp invite CTA
+nudge unpaid players CTA
+cancel hosted match CTA with refund policy
+rehost same configuration CTA
+live finance summary:
+venue cost, reserve collected, final due, platform secured, players pending
+========================
+C. PLAYER TRUST + GAMIFICATION ENGINE
+
+Build real trust layer:
+
+player reliability score %
+host reliability score %
+no-show strike count
+cancellation strike count
+fair host badge
+trusted player badge
+verified organizer badge
+
+Scores must be DB persisted and recomputed from booking/match history.
+
+Show these in:
+
+profile
+host cards
+participant roster
+match cards where relevant
+========================
+D. WALLET ECONOMY FRONTEND
+
+Current wallet is only backend accounting.
+
+Build:
+
+wallet history page
+credit/debit ledger UI
+refund labels
+referral labels
+cashback labels
+auto-use wallet settings
+wallet nudges across payment screens
+“Use wallet balance” banners
+========================
+E. GROWTH & REFERRAL VIRAL LOOPS
+
+Expand referral beyond signup:
+
+invite friends to this match and earn wallet credits if they join/pay
+host squad completion bonus if host fills 100%
+player referral after successful booking/match payment
+post-payment share modal
+
+Need referral tracking per match share link.
+
+========================
+F. OWNER/VENUE PANEL
+
+Add venue owner login dashboard:
+
+today's bookings
+upcoming hosted matches at my venue
+pending payouts
+payout paid history
+earnings summary
+lead status to onboarded owner conversion
+========================
+G. ADMIN LIVE OPS PANEL
+
+Add operational controls:
+
+force confirm match
+force cancel match
+trigger underfill cron
+resend final payment request
+manual wallet credit/debit
+payout override mark paid
+suspend fraudulent user
+========================
+H. JAIPUR LAUNCH UX POLISH
+
+Ensure Jaipur-only launch behavior:
+
+only Jaipur active in consumer app
+pickleball present everywhere
+premium startup-grade polish on:
+payment success screens
+empty states
+wallet prompts
+referral prompts
+trust badges
+cancellation/refund banners
+========================
+I. HARD RULES
+preserve all existing commerce logic
+preserve all QA scripts
+run full typecheck
+extend QA to cover all new systems
+no placeholders
+no mock functions
+no TODO comments
+production deployable only
+
+At the end provide:
+
+exact files changed
+exact DB schema additions
+all new routes
+all QA assertions
+exact deploy commands
+VERY IMPORTANT AFTER THIS
+
+When Replit returns:
+
+paste me its forensic summary again.
+
+I will do another brutal audit and tell you:
+
+whether it's now truly launchable
+or what hidden holes still remain.
+
+Because now we are in final 20% where fake-complete responses are very common.
