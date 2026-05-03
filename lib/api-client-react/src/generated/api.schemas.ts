@@ -541,3 +541,25 @@ export type ListAdminHostedMatchesParams = {
 export type ListAdminPaymentsParams = {
   page?: number;
 };
+
+export type ApproveVenueBody = {
+  isApproved: boolean;
+};
+
+export type SetVenueFeaturedBody = {
+  isFeatured: boolean;
+};
+
+export type UpdateOwnerLeadStatusBodyStatus =
+  (typeof UpdateOwnerLeadStatusBodyStatus)[keyof typeof UpdateOwnerLeadStatusBodyStatus];
+
+export const UpdateOwnerLeadStatusBodyStatus = {
+  new: "new",
+  contacted: "contacted",
+  onboarded: "onboarded",
+  rejected: "rejected",
+} as const;
+
+export type UpdateOwnerLeadStatusBody = {
+  status: UpdateOwnerLeadStatusBodyStatus;
+};

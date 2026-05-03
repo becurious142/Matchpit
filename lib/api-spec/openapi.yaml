@@ -800,6 +800,68 @@ paths:
                 items:
                   $ref: "#/components/schemas/VenueDetail"
 
+  /admin/venues/{venueId}/approve:
+    patch:
+      operationId: approveVenue
+      tags: [admin]
+      summary: Approve or reject a venue
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: venueId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                isApproved:
+                  type: boolean
+              required: [isApproved]
+      responses:
+        "200":
+          description: Updated venue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VenueDetail"
+
+  /admin/venues/{venueId}/featured:
+    patch:
+      operationId: setVenueFeatured
+      tags: [admin]
+      summary: Toggle venue featured flag
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: venueId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                isFeatured:
+                  type: boolean
+              required: [isFeatured]
+      responses:
+        "200":
+          description: Updated venue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VenueDetail"
+
   /admin/owner-leads:
     get:
       operationId: listAdminOwnerLeads
@@ -816,6 +878,38 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/OwnerLead"
+
+  /admin/owner-leads/{leadId}/status:
+    patch:
+      operationId: updateOwnerLeadStatus
+      tags: [admin]
+      summary: Update owner lead status
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: leadId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [new, contacted, onboarded, rejected]
+              required: [status]
+      responses:
+        "200":
+          description: Updated lead
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerLead"
 
 components:
   securitySchemes:

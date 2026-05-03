@@ -1343,6 +1343,80 @@ export const ListAdminVenuesResponseItem = zod
 export const ListAdminVenuesResponse = zod.array(ListAdminVenuesResponseItem);
 
 /**
+ * @summary Approve or reject a venue
+ */
+export const ApproveVenueParams = zod.object({
+  venueId: zod.coerce.string(),
+});
+
+export const ApproveVenueBody = zod.object({
+  isApproved: zod.boolean(),
+});
+
+export const ApproveVenueResponse = zod
+  .object({
+    id: zod.string(),
+    name: zod.string(),
+    city: zod.string(),
+    address: zod.string(),
+    sports: zod.array(zod.string()),
+    pricePerHour: zod.number(),
+    coverImage: zod.string().nullish(),
+    rating: zod.number(),
+    totalReviews: zod.number(),
+    isApproved: zod.boolean(),
+    amenities: zod.array(zod.string()),
+  })
+  .and(
+    zod.object({
+      images: zod.array(zod.string()),
+      description: zod.string().nullish(),
+      openTime: zod.string(),
+      closeTime: zod.string(),
+      contactPhone: zod.string().nullish(),
+      ownerName: zod.string().nullish(),
+      upcomingMatches: zod.number(),
+    }),
+  );
+
+/**
+ * @summary Toggle venue featured flag
+ */
+export const SetVenueFeaturedParams = zod.object({
+  venueId: zod.coerce.string(),
+});
+
+export const SetVenueFeaturedBody = zod.object({
+  isFeatured: zod.boolean(),
+});
+
+export const SetVenueFeaturedResponse = zod
+  .object({
+    id: zod.string(),
+    name: zod.string(),
+    city: zod.string(),
+    address: zod.string(),
+    sports: zod.array(zod.string()),
+    pricePerHour: zod.number(),
+    coverImage: zod.string().nullish(),
+    rating: zod.number(),
+    totalReviews: zod.number(),
+    isApproved: zod.boolean(),
+    amenities: zod.array(zod.string()),
+  })
+  .and(
+    zod.object({
+      images: zod.array(zod.string()),
+      description: zod.string().nullish(),
+      openTime: zod.string(),
+      closeTime: zod.string(),
+      contactPhone: zod.string().nullish(),
+      ownerName: zod.string().nullish(),
+      upcomingMatches: zod.number(),
+    }),
+  );
+
+/**
  * @summary List owner leads
  */
 export const ListAdminOwnerLeadsResponseItem = zod.object({
@@ -1359,3 +1433,26 @@ export const ListAdminOwnerLeadsResponseItem = zod.object({
 export const ListAdminOwnerLeadsResponse = zod.array(
   ListAdminOwnerLeadsResponseItem,
 );
+
+/**
+ * @summary Update owner lead status
+ */
+export const UpdateOwnerLeadStatusParams = zod.object({
+  leadId: zod.coerce.string(),
+});
+
+export const UpdateOwnerLeadStatusBody = zod.object({
+  status: zod.enum(["new", "contacted", "onboarded", "rejected"]),
+});
+
+export const UpdateOwnerLeadStatusResponse = zod.object({
+  id: zod.string(),
+  venueName: zod.string(),
+  ownerName: zod.string(),
+  phone: zod.string(),
+  city: zod.string(),
+  sports: zod.array(zod.string()),
+  message: zod.string().nullish(),
+  status: zod.enum(["new", "contacted", "onboarded", "rejected"]),
+  createdAt: zod.coerce.date(),
+});

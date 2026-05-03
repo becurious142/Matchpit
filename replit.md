@@ -72,8 +72,8 @@ scripts/
 - `/api/notifications` — list, mark-read
 - `/api/wallet` — balance, transactions
 - `/api/dashboard` — aggregated user stats
-- `/api/admin` — venues approval, featured, stats
-- `/api/owner-leads` — submit, list, status update
+- `/api/admin` — venues approval/reject, featured toggle, stats, users, owner-leads status (PATCH)
+- `/api/owner-leads` — submit lead form (public), list + status update (admin)
 
 ## Frontend Pages (14)
 
@@ -89,7 +89,8 @@ scripts/
 - `/dashboard/matches` — My matches (hosted + joined)
 - `/wallet` — Wallet balance + transactions
 - `/profile` — Profile editor
-- `/admin` — Admin panel (venue approval, stats)
+- `/admin` — Admin panel (venue approval + featured toggle, owner leads management, users table, stats)
+- `/dashboard/wallet` — Wallet balance + payment history
 - `/sign-in`, `/sign-up` — Clerk auth pages
 
 ## Environment Variables
@@ -112,7 +113,8 @@ scripts/
 - **req.params in Express**: always cast as `const id = req.params.id as string` (typed `string | string[]` by default)
 - **Orval hooks**: path-only mutations take `{ matchId }` directly (no `{ data: ... }` wrapper); POST-with-body mutations take `{ data: Body }`
 - **lib/db is composite**: run `pnpm run typecheck:libs` before api-server typecheck
-- **Query invalidations**: `book.tsx` invalidates `bookings` + `getVenueSlots`; `match-detail.tsx` invalidates `getHostedMatch` + `listHostedMatches`
+- **Query invalidations**: `book.tsx` invalidates `bookings` + `getVenueSlots`; `match-detail.tsx` invalidates `getHostedMatch` + `listHostedMatches`; `admin.tsx` uses Orval-generated path keys `/api/admin/venues` and `/api/admin/owner-leads`
+- **Admin guard**: `requireAdmin()` helper reads profile from DB, returns 403 if not admin; frontend guards with `profile?.isAdmin` before rendering
 
 ## Seeded Data
 

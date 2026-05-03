@@ -20,6 +20,7 @@ import type {
   ActivityItem,
   AdminStats,
   AdminUsersResponse,
+  ApproveVenueBody,
   Booking,
   CreateBookingBody,
   CreateHostedMatchBody,
@@ -46,8 +47,10 @@ import type {
   PaymentOrder,
   PaymentVerifyResponse,
   Profile,
+  SetVenueFeaturedBody,
   SlotDay,
   SportCategory,
+  UpdateOwnerLeadStatusBody,
   UpdateProfileBody,
   Venue,
   VenueDetail,
@@ -3014,6 +3017,180 @@ export function useListAdminVenues<
 }
 
 /**
+ * @summary Approve or reject a venue
+ */
+export const getApproveVenueUrl = (venueId: string) => {
+  return `/api/admin/venues/${venueId}/approve`;
+};
+
+export const approveVenue = async (
+  venueId: string,
+  approveVenueBody: ApproveVenueBody,
+  options?: RequestInit,
+): Promise<VenueDetail> => {
+  return customFetch<VenueDetail>(getApproveVenueUrl(venueId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(approveVenueBody),
+  });
+};
+
+export const getApproveVenueMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof approveVenue>>,
+    TError,
+    { venueId: string; data: BodyType<ApproveVenueBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof approveVenue>>,
+  TError,
+  { venueId: string; data: BodyType<ApproveVenueBody> },
+  TContext
+> => {
+  const mutationKey = ["approveVenue"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof approveVenue>>,
+    { venueId: string; data: BodyType<ApproveVenueBody> }
+  > = (props) => {
+    const { venueId, data } = props ?? {};
+
+    return approveVenue(venueId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ApproveVenueMutationResult = NonNullable<
+  Awaited<ReturnType<typeof approveVenue>>
+>;
+export type ApproveVenueMutationBody = BodyType<ApproveVenueBody>;
+export type ApproveVenueMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Approve or reject a venue
+ */
+export const useApproveVenue = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof approveVenue>>,
+    TError,
+    { venueId: string; data: BodyType<ApproveVenueBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof approveVenue>>,
+  TError,
+  { venueId: string; data: BodyType<ApproveVenueBody> },
+  TContext
+> => {
+  return useMutation(getApproveVenueMutationOptions(options));
+};
+
+/**
+ * @summary Toggle venue featured flag
+ */
+export const getSetVenueFeaturedUrl = (venueId: string) => {
+  return `/api/admin/venues/${venueId}/featured`;
+};
+
+export const setVenueFeatured = async (
+  venueId: string,
+  setVenueFeaturedBody: SetVenueFeaturedBody,
+  options?: RequestInit,
+): Promise<VenueDetail> => {
+  return customFetch<VenueDetail>(getSetVenueFeaturedUrl(venueId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(setVenueFeaturedBody),
+  });
+};
+
+export const getSetVenueFeaturedMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof setVenueFeatured>>,
+    TError,
+    { venueId: string; data: BodyType<SetVenueFeaturedBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof setVenueFeatured>>,
+  TError,
+  { venueId: string; data: BodyType<SetVenueFeaturedBody> },
+  TContext
+> => {
+  const mutationKey = ["setVenueFeatured"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof setVenueFeatured>>,
+    { venueId: string; data: BodyType<SetVenueFeaturedBody> }
+  > = (props) => {
+    const { venueId, data } = props ?? {};
+
+    return setVenueFeatured(venueId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SetVenueFeaturedMutationResult = NonNullable<
+  Awaited<ReturnType<typeof setVenueFeatured>>
+>;
+export type SetVenueFeaturedMutationBody = BodyType<SetVenueFeaturedBody>;
+export type SetVenueFeaturedMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Toggle venue featured flag
+ */
+export const useSetVenueFeatured = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof setVenueFeatured>>,
+    TError,
+    { venueId: string; data: BodyType<SetVenueFeaturedBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof setVenueFeatured>>,
+  TError,
+  { venueId: string; data: BodyType<SetVenueFeaturedBody> },
+  TContext
+> => {
+  return useMutation(getSetVenueFeaturedMutationOptions(options));
+};
+
+/**
  * @summary List owner leads
  */
 export const getListAdminOwnerLeadsUrl = () => {
@@ -3087,3 +3264,91 @@ export function useListAdminOwnerLeads<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Update owner lead status
+ */
+export const getUpdateOwnerLeadStatusUrl = (leadId: string) => {
+  return `/api/admin/owner-leads/${leadId}/status`;
+};
+
+export const updateOwnerLeadStatus = async (
+  leadId: string,
+  updateOwnerLeadStatusBody: UpdateOwnerLeadStatusBody,
+  options?: RequestInit,
+): Promise<OwnerLead> => {
+  return customFetch<OwnerLead>(getUpdateOwnerLeadStatusUrl(leadId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateOwnerLeadStatusBody),
+  });
+};
+
+export const getUpdateOwnerLeadStatusMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateOwnerLeadStatus>>,
+    TError,
+    { leadId: string; data: BodyType<UpdateOwnerLeadStatusBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateOwnerLeadStatus>>,
+  TError,
+  { leadId: string; data: BodyType<UpdateOwnerLeadStatusBody> },
+  TContext
+> => {
+  const mutationKey = ["updateOwnerLeadStatus"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateOwnerLeadStatus>>,
+    { leadId: string; data: BodyType<UpdateOwnerLeadStatusBody> }
+  > = (props) => {
+    const { leadId, data } = props ?? {};
+
+    return updateOwnerLeadStatus(leadId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateOwnerLeadStatusMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateOwnerLeadStatus>>
+>;
+export type UpdateOwnerLeadStatusMutationBody =
+  BodyType<UpdateOwnerLeadStatusBody>;
+export type UpdateOwnerLeadStatusMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update owner lead status
+ */
+export const useUpdateOwnerLeadStatus = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateOwnerLeadStatus>>,
+    TError,
+    { leadId: string; data: BodyType<UpdateOwnerLeadStatusBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateOwnerLeadStatus>>,
+  TError,
+  { leadId: string; data: BodyType<UpdateOwnerLeadStatusBody> },
+  TContext
+> => {
+  return useMutation(getUpdateOwnerLeadStatusMutationOptions(options));
+};
