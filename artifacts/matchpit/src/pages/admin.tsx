@@ -18,7 +18,8 @@ import { Redirect } from "wouter";
 import {
   CheckCircle, XCircle, Star, Users, Building2, TrendingUp,
   ClipboardList, Globe, BarChart3, Tag, IndianRupee, ToggleLeft,
-  ToggleRight, Plus, Zap, ShieldAlert, Bell
+  ToggleRight, Plus, Zap, ShieldAlert, Bell, Activity, MessageSquare,
+  Flag, Sprout, RefreshCw, Shield, Database
 } from "lucide-react";
 
 interface City {
@@ -99,6 +100,26 @@ export default function Admin() {
   const [liveOpsReason, setLiveOpsReason] = useState("");
   const [liveOpsAction, setLiveOpsAction] = useState<string | null>(null);
 
+  // ── Dispatch Logs state ────────────────────────────────────────────────────
+  const [dispatchLogs, setDispatchLogs] = useState<any[]>([]);
+  const [dispatchLogsLoading, setDispatchLogsLoading] = useState(false);
+
+  // ── Funnels state ──────────────────────────────────────────────────────────
+  const [funnels, setFunnels] = useState<any | null>(null);
+  const [funnelsLoading, setFunnelsLoading] = useState(false);
+
+  // ── KPI state ─────────────────────────────────────────────────────────────
+  const [kpi, setKpi] = useState<any | null>(null);
+  const [kpiLoading, setKpiLoading] = useState(false);
+
+  // ── Moderation state ───────────────────────────────────────────────────────
+  const [reports, setReports] = useState<any[]>([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
+
+  // ── Seed state ────────────────────────────────────────────────────────────
+  const [seedRunning, setSeedRunning] = useState(false);
+  const [seedResults, setSeedResults] = useState<Record<string, any> | null>(null);
+
   useEffect(() => {
     if (!profile?.isAdmin) return;
     loadCities();
@@ -108,6 +129,64 @@ export default function Admin() {
     loadReferralConfig();
     loadLiveMatches();
   }, [profile?.isAdmin]);
+
+  const loadDispatchLogs = async () => {
+    setDispatchLogsLoading(true);
+    try {
+      const data = await adminFetch<any[]>("/admin/dispatch-logs");
+      setDispatchLogs(data);
+    } finally { setDispatchLogsLoading(false); }
+  };
+
+  const loadFunnels = async () => {
+    setFunnelsLoading(true);
+    try {
+      const data = await adminFetch<any>("/admin/funnels");
+      setFunnels(data);
+    } finally { setFunnelsLoading(false); }
+  };
+
+  const loadKpi = async () => {
+    setKpiLoading(true);
+    try {
+      const data = await adminFetch<any>("/admin/kpi");
+      setKpi(data);
+    } finally { setKpiLoading(false); }
+  };
+
+  const loadReports = async () => {
+    setReportsLoading(true);
+    try {
+      const data = await adminFetch<any[]>("/admin/reports");
+      setReports(data);
+    } finally { setReportsLoading(false); }
+  };
+
+  const handleUpdateReport = async (reportId: string, status: string) => {
+    try {
+      await adminFetch(`/admin/reports/${reportId}`, { method: "PATCH", body: JSON.stringify({ status }) });
+      setReports((prev) => prev.map((r) => r.id === reportId ? { ...r, status } : r));
+      toast({ title: "Report updated" });
+    } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
+  };
+
+  const handleSuspendUser = async (userId: string, suspended: boolean) => {
+    try {
+      await adminFetch(`/admin/users/${userId}/suspend`, { method: "POST", body: JSON.stringify({ suspended }) });
+      toast({ title: suspended ? "User suspended" : "User unsuspended" });
+    } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
+  };
+
+  const handleRunSeedAll = async () => {
+    setSeedRunning(true);
+    setSeedResults(null);
+    try {
+      const data = await adminFetch<any>("/admin/seed/all", { method: "POST" });
+      setSeedResults(data.results);
+      toast({ title: "Demo data seeded successfully!" });
+    } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
+    finally { setSeedRunning(false); }
+  };
 
   const loadLiveMatches = async () => {
     setLiveMatchesLoading(true);

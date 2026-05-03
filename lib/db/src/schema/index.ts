@@ -23,3 +23,7 @@ export * from "./squads";
 export * from "./player-follows";
 export * from "./match-messages";
 export * from "./test-invites";
+export * from "./notification-dispatch-logs";
+export * from "./analytics-events";
+export * from "./user-reports";
+export * from "./user-strikes";

@@ -13,6 +13,7 @@ import { razorpay, verifyRazorpaySignature, getRazorpayKeyId } from "../lib/razo
 import { processReferralRewards, processFirstBookingCashback, processFirstMatchCashback } from "../lib/wallet";
 import { generateBookingPayout, generateMatchPayout } from "../lib/payouts";
 import { createNotification } from "../lib/notifications";
+import { trackEvent, EVENTS } from "../lib/analytics";
 
 const router: IRouter = Router();
 
@@ -173,6 +174,7 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
       try {
         const amount = Number(payment.amount);
         if (type === "booking" && referenceId) {
+          await trackEvent(EVENTS.BOOKING_PAID, profile.id, { referenceId, amount });
           const [booking] = await db
             .select({ venueId: bookingsTable.venueId })
             .from(bookingsTable)
@@ -192,6 +194,7 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
           });
         }
         if (type === "host_commitment" && referenceId) {
+          await trackEvent(EVENTS.HOST_MATCH_PAID, profile.id, { referenceId, amount });
           const [match] = await db
             .select({ venueId: hostedMatchesTable.venueId })
             .from(hostedMatchesTable)
@@ -211,6 +214,7 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
           });
         }
         if (type === "match_reserve" && referenceId) {
+          await trackEvent(EVENTS.RESERVE_JOIN_PAID, profile.id, { referenceId, amount });
           await processReferralRewards(profile.id);
           await createNotification({
             userId: profile.id,
@@ -221,6 +225,7 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
           });
         }
         if (type === "match_final" && referenceId) {
+          await trackEvent(EVENTS.FINAL_PAYMENT_PAID, profile.id, { referenceId, amount });
           const [match] = await db
             .select({ venueId: hostedMatchesTable.venueId, finalFeePerPlayer: hostedMatchesTable.finalFeePerPlayer })
             .from(hostedMatchesTable)

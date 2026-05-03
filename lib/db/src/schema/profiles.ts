@@ -7,6 +7,7 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
+
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -32,6 +33,10 @@ export const profilesTable = pgTable("profiles", {
   referralCode: text("referral_code").unique(),
   referredBy: text("referred_by"),
   signupBonusPaid: boolean("signup_bonus_paid").notNull().default(false),
+  onboardingComplete: boolean("onboarding_complete").notNull().default(false),
+  preferredAreas: text("preferred_areas").array().notNull().default([]),
+  primarySkillLevel: text("primary_skill_level"),
+  strikePoints: integer("strike_points").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

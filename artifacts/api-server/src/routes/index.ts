@@ -17,6 +17,10 @@ import ownerRouter from "./owner";
 import communityRouter from "./community";
 import squadsRouter from "./squads";
 import matchChatRouter from "./match-chat";
+import paymentsWebhookRouter from "./payments-webhook";
+import moderationRouter from "./moderation";
+import adminSeedRouter from "./admin-seed";
+import adminAnalyticsRouter from "./admin-analytics";
 
 const router: IRouter = Router();
 
@@ -29,6 +33,7 @@ router.use(bookingsRouter);
 router.use(hostedMatchesRouter);
 router.use(matchChatRouter);
 router.use(paymentsRouter);
+router.use(paymentsWebhookRouter);
 router.use(walletRouter);
 router.use(dashboardRouter);
 router.use(notificationsRouter);
@@ -36,6 +41,9 @@ router.use(ownerLeadsRouter);
 router.use(ownerRouter);
 router.use(adminRouter);
 router.use(adminExtendedRouter);
+router.use(adminSeedRouter);
+router.use(adminAnalyticsRouter);
+router.use(moderationRouter);
 router.use(communityRouter);
 router.use(squadsRouter);
 

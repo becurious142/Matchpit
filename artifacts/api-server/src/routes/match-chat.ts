@@ -9,6 +9,8 @@ import {
 } from "@workspace/db";
 import { eq, desc, and } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
+import { checkChatRateLimit } from "../lib/moderation";
+import { trackEvent, EVENTS } from "../lib/analytics";
 
 const router: IRouter = Router();
 
@@ -67,6 +69,12 @@ router.post("/hosted-matches/:matchId/chat", requireAuth, async (req, res) => {
       return;
     }
 
+    const allowed = await checkChatRateLimit(profile.id, matchId);
+    if (!allowed) {
+      res.status(429).json({ error: "rate_limited", message: "You're sending messages too quickly. Please slow down." });
+      return;
+    }
+
     const [match] = await db.select({ id: hostedMatchesTable.id, hostUserId: hostedMatchesTable.hostUserId })
       .from(hostedMatchesTable).where(eq(hostedMatchesTable.id, matchId)).limit(1);
     if (!match) { res.status(404).json({ error: "not_found" }); return; }
@@ -91,6 +99,8 @@ router.post("/hosted-matches/:matchId/chat", requireAuth, async (req, res) => {
       userId: profile.id,
       message: message.trim(),
     }).returning();
+
+    setImmediate(() => trackEvent(EVENTS.CHAT_MESSAGE_SENT, profile.id, { matchId }));
 
     res.status(201).json({
       id: msg.id,

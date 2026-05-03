@@ -10,6 +10,8 @@ import {
 } from "@workspace/db";
 import { eq, desc, and, sql, count } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
+import { checkPostRateLimit } from "../lib/moderation";
+import { trackEvent, EVENTS } from "../lib/analytics";
 
 const router: IRouter = Router();
 
@@ -114,6 +116,12 @@ router.post("/community/post", requireAuth, async (req, res) => {
       return;
     }
 
+    const allowed = await checkPostRateLimit(profile.id);
+    if (!allowed) {
+      res.status(429).json({ error: "rate_limited", message: "You've posted too many times today. Try again tomorrow." });
+      return;
+    }
+
     const [activeCity] = await db.select({ id: citiesTable.id })
       .from(citiesTable).where(eq(citiesTable.isActive, true)).limit(1);
 
@@ -127,6 +135,8 @@ router.post("/community/post", requireAuth, async (req, res) => {
       relatedMatchId: relatedMatchId ?? null,
       relatedVenueId: relatedVenueId ?? null,
     }).returning();
+
+    setImmediate(() => trackEvent(EVENTS.COMMUNITY_POST_CREATED, profile.id, { type, sport }));
 
     res.status(201).json({ ...post, authorName: profile.fullName, authorAvatar: profile.avatarUrl });
   } catch (err) {
