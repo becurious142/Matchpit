@@ -6,8 +6,8 @@ import { Redirect } from "wouter";
 
 export default function Admin() {
   const { data: profile, isLoading: profileLoading } = useGetMyProfile();
-  const { data: stats, isLoading: statsLoading } = useGetAdminStats({ query: { enabled: !!profile?.isAdmin }});
-  const { data: usersData, isLoading: usersLoading } = useListAdminUsers({}, { query: { enabled: !!profile?.isAdmin }});
+  const { data: stats, isLoading: statsLoading } = useGetAdminStats();
+  const { data: usersData, isLoading: usersLoading } = useListAdminUsers({});
 
   if (profileLoading) return <div className="p-8"><Skeleton className="h-64 w-full" /></div>;
   if (!profile?.isAdmin) return <Redirect to="/" />;

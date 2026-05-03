@@ -25,8 +25,8 @@ export default function DashboardMatches() {
         <TabsContent value="joined" className="space-y-4">
           {loadingJoined ? (
             Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32 w-full rounded-xl" />)
-          ) : joinedMatches?.matches?.length ? (
-            joinedMatches.matches.map(participant => {
+          ) : joinedMatches?.length ? (
+            joinedMatches.map(participant => {
               const match = participant.match;
               if (!match) return null;
               return (
@@ -73,8 +73,8 @@ export default function DashboardMatches() {
         <TabsContent value="hosted" className="space-y-4">
           {loadingHosted ? (
             Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32 w-full rounded-xl" />)
-          ) : hostedMatches?.matches?.length ? (
-            hostedMatches.matches.map(match => (
+          ) : hostedMatches?.length ? (
+            hostedMatches.map(match => (
               <Card key={match.id} className="bg-card/50 border-border/50 cursor-pointer hover:border-primary transition-colors" onClick={() => setLocation(`/matches/${match.id}`)}>
                 <CardContent className="p-6">
                   <div className="flex justify-between items-start mb-4">

@@ -20,7 +20,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Calendar, Clock, MapPin, Users, Trophy } from "lucide-react";
-import { format, addDays } from "date-fns";
+import { format, addDays, parseISO } from "date-fns";
 import { loadRazorpay } from "@/lib/razorpay";
 
 const hostSchema = z.object({
@@ -62,12 +62,8 @@ export default function HostMatch() {
 
   // Data fetching
   const { data: sports } = useListSports();
-  const { data: venuesData } = useListVenues({ sport: watchSport || undefined }, { query: { enabled: !!watchSport }});
-  const { data: slotsData } = useGetVenueSlots(
-    watchVenueId, 
-    { from: watchDate, to: watchDate }, 
-    { query: { enabled: !!watchVenueId && !!watchDate } }
-  );
+  const { data: venuesData } = useListVenues({ sport: watchSport || undefined });
+  const { data: slotsData } = useGetVenueSlots(watchVenueId, { from: watchDate, to: watchDate });
 
   const selectedVenue = venuesData?.venues.find(v => v.id === watchVenueId);
   const availableSlots = slotsData?.[0]?.slots || [];

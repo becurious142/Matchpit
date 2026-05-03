@@ -75,6 +75,17 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
 
     const { razorpayOrderId, razorpayPaymentId, razorpaySignature, type, referenceId } = req.body;
 
+    // Idempotency: if this payment was already verified, return existing record
+    const [existing] = await db
+      .select()
+      .from(paymentsTable)
+      .where(eq(paymentsTable.razorpayOrderId, razorpayOrderId))
+      .limit(1);
+    if (existing && existing.status === "success") {
+      res.json({ success: true, paymentId: existing.id, referenceId, type });
+      return;
+    }
+
     const isValid = verifyRazorpaySignature(razorpayOrderId, razorpayPaymentId, razorpaySignature);
     if (!isValid) {
       // In dev mode without keys, allow through

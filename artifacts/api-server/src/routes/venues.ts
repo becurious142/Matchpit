@@ -113,7 +113,7 @@ router.get("/venues/sports", async (_req, res) => {
 
 router.get("/venues/:venueId", async (req, res) => {
   try {
-    const { venueId } = req.params;
+    const venueId = req.params.venueId as string;
     const [venue] = await db
       .select()
       .from(venuesTable)
@@ -134,7 +134,7 @@ router.get("/venues/:venueId", async (req, res) => {
 
 router.get("/venues/:venueId/slots", async (req, res) => {
   try {
-    const { venueId } = req.params;
+    const venueId = req.params.venueId as string;
     const today = new Date();
     const fromDate = req.query.from
       ? parseISO(req.query.from as string)

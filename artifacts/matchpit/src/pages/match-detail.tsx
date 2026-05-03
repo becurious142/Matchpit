@@ -1,5 +1,6 @@
 import { useParams, useLocation } from "wouter";
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useGetHostedMatch, useJoinHostedMatch, useCreatePaymentOrder, useVerifyPayment } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,9 +19,10 @@ export default function MatchDetail() {
   const { user } = useUser();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const { data: matchDetail, isLoading, refetch } = useGetHostedMatch(id!, { query: { enabled: !!id } });
+  const { data: matchDetail, isLoading, refetch } = useGetHostedMatch(id!);
   const joinMatch = useJoinHostedMatch();
   const createPaymentOrder = useCreatePaymentOrder();
   const verifyPayment = useVerifyPayment();
@@ -76,15 +78,12 @@ export default function MatchDetail() {
               }
             });
 
-            // 5. Join match
-            await joinMatch.mutateAsync({
-              data: {
-                matchId: id!,
-                razorpayOrderId: response.razorpay_order_id,
-                razorpayPaymentId: response.razorpay_payment_id,
-                razorpaySignature: response.razorpay_signature
-              }
-            });
+            // 5. Join match (payment was already verified above)
+            await joinMatch.mutateAsync({ matchId: id! });
+
+            // Invalidate stale queries so match detail + matches list reflect new state
+            await queryClient.invalidateQueries({ queryKey: ["getHostedMatch", id] });
+            await queryClient.invalidateQueries({ queryKey: ["listHostedMatches"] });
 
             toast({
               title: "You're in! 🎉",

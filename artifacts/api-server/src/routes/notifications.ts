@@ -50,7 +50,7 @@ router.post("/notifications/:id/read", requireAuth, async (req, res) => {
       return;
     }
 
-    const { id } = req.params;
+    const id = req.params.id as string;
     const [updated] = await db
       .update(notificationsTable)
       .set({ isRead: true })

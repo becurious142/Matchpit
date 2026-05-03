@@ -338,7 +338,7 @@ router.get("/hosted-matches/joined", requireAuth, async (req, res) => {
 // GET /hosted-matches/:matchId
 router.get("/hosted-matches/:matchId", async (req, res) => {
   try {
-    const { matchId } = req.params;
+    const matchId = req.params.matchId as string;
     const { userId } = getAuth(req);
     const profile = userId ? await getProfileByClerkId(userId) : null;
 
@@ -399,7 +399,7 @@ router.post("/hosted-matches/:matchId/join", requireAuth, async (req, res) => {
       return;
     }
 
-    const { matchId } = req.params;
+    const matchId = req.params.matchId as string;
     const [match] = await db
       .select()
       .from(hostedMatchesTable)
@@ -488,7 +488,7 @@ router.post("/hosted-matches/:matchId/join", requireAuth, async (req, res) => {
 // GET /hosted-matches/:matchId/participants
 router.get("/hosted-matches/:matchId/participants", async (req, res) => {
   try {
-    const { matchId } = req.params;
+    const matchId = req.params.matchId as string;
     const participants = await db
       .select()
       .from(hostedMatchParticipantsTable)
@@ -517,7 +517,7 @@ router.post("/hosted-matches/:matchId/final-payment", requireAuth, async (req, r
       return;
     }
 
-    const { matchId } = req.params;
+    const matchId = req.params.matchId as string;
     const [match] = await db
       .select()
       .from(hostedMatchesTable)

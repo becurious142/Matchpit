@@ -18,7 +18,6 @@ export default function Venues() {
   const [searchInput, setSearchInput] = useState(search);
 
   const { data: venuesData, isLoading: loadingVenues } = useListVenues({ 
-    query: { enabled: true }, 
     city: city || undefined, 
     sport: sport || undefined, 
     search: search || undefined 

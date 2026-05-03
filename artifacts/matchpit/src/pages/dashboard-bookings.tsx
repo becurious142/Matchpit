@@ -9,10 +9,7 @@ import { format, parseISO } from "date-fns";
 
 export default function DashboardBookings() {
   const [status, setStatus] = useState<ListMyBookingsStatus | undefined>(undefined);
-  const { data: bookings, isLoading } = useListMyBookings(
-    { status },
-    { query: { enabled: true } }
-  );
+  const { data: bookings, isLoading } = useListMyBookings({ status });
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl min-h-screen">

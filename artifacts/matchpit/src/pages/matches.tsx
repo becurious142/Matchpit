@@ -17,7 +17,6 @@ export default function Matches() {
   const [city, setCity] = useState(searchParams.get("city") || "Jaipur");
 
   const { data: matchesData, isLoading: loadingMatches } = useListHostedMatches({ 
-    query: { enabled: true },
     sport: sport || undefined,
     city: city || undefined,
     status: 'open'

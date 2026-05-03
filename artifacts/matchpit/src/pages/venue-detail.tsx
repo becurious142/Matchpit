@@ -14,18 +14,14 @@ export default function VenueDetail() {
   const [, setLocation] = useLocation();
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
 
-  const { data: venue, isLoading: loadingVenue } = useGetVenue(id!, { query: { enabled: !!id } });
+  const { data: venue, isLoading: loadingVenue } = useGetVenue(id!);
   
   const fromDate = format(new Date(), 'yyyy-MM-dd');
   const toDate = format(addDays(new Date(), 14), 'yyyy-MM-dd');
   
-  const { data: slotsData, isLoading: loadingSlots } = useGetVenueSlots(id!, { from: fromDate, to: toDate }, { query: { enabled: !!id } });
+  const { data: slotsData, isLoading: loadingSlots } = useGetVenueSlots(id!, { from: fromDate, to: toDate });
   
-  const { data: matchesData } = useListHostedMatches({ 
-    // @ts-ignore - backend might not support venueId directly in list but we can try or filter client side
-    venueId: id,
-    status: 'open'
-  }, { query: { enabled: !!id } });
+  const { data: matchesData } = useListHostedMatches({ status: 'open' });
 
   const selectedDaySlots = slotsData?.find(d => d.date === selectedDate)?.slots || [];
 

@@ -1,5 +1,6 @@
 import { useParams, useLocation } from "wouter";
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useGetVenue, useGetVenueSlots, useCreatePaymentOrder, useVerifyPayment, useCreateBooking } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,6 +15,7 @@ export default function Book() {
   const { venueId, slotId } = useParams<{ venueId: string, slotId: string }>();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
@@ -94,6 +96,10 @@ export default function Book() {
                 razorpaySignature: response.razorpay_signature
               }
             });
+
+            // Invalidate stale queries so bookings + slots reflect new state
+            await queryClient.invalidateQueries({ queryKey: ["bookings"] });
+            await queryClient.invalidateQueries({ queryKey: ["getVenueSlots", venueId] });
 
             setIsSuccess(true);
             toast({

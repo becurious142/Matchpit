@@ -1,16 +1,16 @@
 import { Link, useLocation } from "wouter";
-import { UserButton, useUser, SignInButton, SignUpButton, useAuth } from "@clerk/react";
-import { Bell, Home, MapPin, Trophy, PlusCircle, User, Activity } from "lucide-react";
+import { UserButton, useUser, SignInButton, SignUpButton } from "@clerk/react";
+import { Bell, Home, MapPin, Trophy, PlusCircle, Activity } from "lucide-react";
 import { useListNotifications } from "@workspace/api-client-react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 
 export function Layout({ children }: { children: React.ReactNode }) {
-  const { isSignedIn, user } = useUser();
+  const { isSignedIn } = useUser();
   const [location] = useLocation();
 
-  const { data: notificationsData } = useListNotifications({ query: { enabled: !!isSignedIn }});
-  const unreadCount = notificationsData?.notifications.filter(n => !n.isRead).length || 0;
+  const { data: notificationsData } = useListNotifications();
+  const unreadCount = isSignedIn ? (notificationsData?.filter(n => !n.isRead).length || 0) : 0;
 
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background text-foreground pb-16 md:pb-0">

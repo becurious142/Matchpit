@@ -10,7 +10,7 @@ import { motion } from "framer-motion";
 export default function Home() {
   const { data: featuredVenues, isLoading: loadingVenues } = useListFeaturedVenues();
   const { data: sportsData, isLoading: loadingSports } = useListSports();
-  const { data: matchesData, isLoading: loadingMatches } = useListHostedMatches({ query: { enabled: true } });
+  const { data: matchesData, isLoading: loadingMatches } = useListHostedMatches({ status: 'open' });
 
   return (
     <div className="flex flex-col min-h-screen w-full">

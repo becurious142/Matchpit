@@ -29,7 +29,7 @@ export default function Dashboard() {
       const order = await createPaymentOrder.mutateAsync({
         data: {
           type: "match_final",
-          referenceId: tempRefId,
+          referenceId: matchId,
           amount: amount
         }
       });
@@ -57,14 +57,7 @@ export default function Dashboard() {
               }
             });
 
-            await payFinalAmount.mutateAsync({
-              matchId,
-              data: {
-                razorpayOrderId: response.razorpay_order_id,
-                razorpayPaymentId: response.razorpay_payment_id,
-                razorpaySignature: response.razorpay_signature
-              }
-            });
+            await payFinalAmount.mutateAsync({ matchId });
 
             toast({ title: "Payment Successful! 💸", description: "You're all set for the match." });
             refetch();
@@ -188,7 +181,7 @@ export default function Dashboard() {
                         disabled={processingId === match.id}
                         className="w-full sm:w-auto font-bold uppercase"
                       >
-                        {processingId === match.id ? "Processing..." : `Pay Final ₹${matchDetail?.finalFeePerPlayer || match.finalFeePerPlayer}`}
+                        {processingId === match.id ? "Processing..." : `Pay Final ₹${match.finalFeePerPlayer}`}
                       </Button>
                     </div>
                   </CardContent>
