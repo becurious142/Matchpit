@@ -468,6 +468,26 @@ router.post("/hosted-matches/:matchId/join", requireAuth, async (req, res) => {
       referenceId: matchId,
     });
 
+    // Almost full — notify all other participants when only 2 spots remain
+    const spotsAfterJoin = match.totalPlayers - newCount;
+    if (spotsAfterJoin <= 2 && spotsAfterJoin > 0) {
+      const others = await db
+        .select({ userId: hostedMatchParticipantsTable.userId })
+        .from(hostedMatchParticipantsTable)
+        .where(and(eq(hostedMatchParticipantsTable.matchId, matchId), ne(hostedMatchParticipantsTable.userId, profile.id)));
+      if (others.length > 0) {
+        await db.insert(notificationsTable).values(
+          others.map((o) => ({
+            userId: o.userId,
+            type: "match_almost_full" as const,
+            title: "Match Almost Full!",
+            body: `Only ${spotsAfterJoin} spot${spotsAfterJoin === 1 ? "" : "s"} left in the ${match.sport} match on ${match.date}. Share before it fills up!`,
+            referenceId: matchId,
+          })),
+        );
+      }
+    }
+
     if (newCount >= match.minPlayers) {
       await db.insert(notificationsTable).values({
         userId: match.hostUserId,
@@ -476,6 +496,25 @@ router.post("/hosted-matches/:matchId/join", requireAuth, async (req, res) => {
         body: `Your ${match.sport} match on ${match.date} has enough players and is now confirmed!`,
         referenceId: matchId,
       });
+      // Notify all participants that final payment is now due
+      const allParticipants = await db
+        .select({ userId: hostedMatchParticipantsTable.userId })
+        .from(hostedMatchParticipantsTable)
+        .where(and(
+          eq(hostedMatchParticipantsTable.matchId, matchId),
+          ne(hostedMatchParticipantsTable.userId, match.hostUserId),
+        ));
+      if (allParticipants.length > 0) {
+        await db.insert(notificationsTable).values(
+          allParticipants.map((p) => ({
+            userId: p.userId,
+            type: "final_payment_due" as const,
+            title: "Match Confirmed — Final Payment Due",
+            body: `The ${match.sport} match on ${match.date} is confirmed! Complete your final payment to lock your spot.`,
+            referenceId: matchId,
+          })),
+        );
+      }
     }
 
     res.status(201).json(formatParticipant(participant, profile, null));
@@ -795,6 +834,89 @@ router.get("/hosted-matches/:matchId/finance", requireAuth, async (req, res) => 
   } catch (err) {
     req.log.error({ err }, "Error fetching match finance");
     res.status(500).json({ error: "internal_error", message: "Failed to fetch match finance" });
+  }
+});
+
+// ─── Drop Spot (participant self-drop + reopen) ────────────────────────────
+router.post("/hosted-matches/:matchId/drop-spot", requireAuth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const profile = await getProfileByClerkId(userId!);
+    if (!profile) { res.status(404).json({ error: "not_found", message: "Profile not found" }); return; }
+
+    const matchId = req.params.matchId as string;
+    const [match] = await db.select().from(hostedMatchesTable).where(eq(hostedMatchesTable.id, matchId)).limit(1);
+    if (!match) { res.status(404).json({ error: "not_found", message: "Match not found" }); return; }
+
+    if (["cancelled", "cancelled_underfilled", "completed"].includes(match.status)) {
+      res.status(400).json({ error: "invalid_state", message: "Cannot drop from a closed match" });
+      return;
+    }
+
+    const [participant] = await db
+      .select()
+      .from(hostedMatchParticipantsTable)
+      .where(and(
+        eq(hostedMatchParticipantsTable.matchId, matchId),
+        eq(hostedMatchParticipantsTable.userId, profile.id),
+      ))
+      .limit(1);
+
+    if (!participant) {
+      res.status(404).json({ error: "not_found", message: "You are not a participant of this match" });
+      return;
+    }
+    if (participant.status === "cancelled" || participant.status === "dropped_unpaid") {
+      res.status(400).json({ error: "already_dropped", message: "Already dropped from this match" });
+      return;
+    }
+
+    // Mark participant cancelled
+    await db
+      .update(hostedMatchParticipantsTable)
+      .set({ status: "cancelled", droppedAt: new Date(), droppedReason: "Participant self-dropped", updatedAt: new Date() })
+      .where(eq(hostedMatchParticipantsTable.id, participant.id));
+
+    // Decrement player count and reopen if was confirmed
+    const newCount = Math.max(0, match.currentPlayers - 1);
+    const newStatus = newCount < match.minPlayers && match.status === "confirmed" ? "open" : match.status;
+    await db
+      .update(hostedMatchesTable)
+      .set({ currentPlayers: newCount, status: newStatus as any, updatedAt: new Date() })
+      .where(eq(hostedMatchesTable.id, matchId));
+
+    // Refund reserve fee to wallet
+    if (participant.reservePaymentId) {
+      try {
+        const { processCancellationRefund } = await import("../lib/wallet");
+        await processCancellationRefund(profile.id, participant.id, "hosted_match", Number(match.reserveFee ?? 0));
+      } catch (e) { /* non-fatal */ }
+    }
+
+    // Notify host
+    await db.insert(notificationsTable).values({
+      userId: match.hostUserId,
+      type: "player_dropped_unpaid" as const,
+      title: "A player dropped out",
+      body: `${profile.fullName} has dropped from your ${match.sport} match on ${match.date}. A spot is now open.`,
+      referenceId: matchId,
+    });
+
+    // Notify host and all remaining participants if spot is reopened
+    if (newStatus === "open" && match.status === "confirmed") {
+      await db.insert(notificationsTable).values({
+        userId: match.hostUserId,
+        type: "match_reopened" as const,
+        title: "Match Spot Reopened",
+        body: `Your ${match.sport} match on ${match.date} has an open spot. Share to refill!`,
+        referenceId: matchId,
+      });
+    }
+
+    res.json({ matchId, status: newStatus, currentPlayers: newCount, message: "Spot dropped and reopened" });
+  } catch (err) {
+    req.log.error({ err }, "Error dropping spot");
+    res.status(500).json({ error: "internal_error", message: "Failed to drop spot" });
   }
 });
 

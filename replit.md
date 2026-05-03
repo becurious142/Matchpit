@@ -33,7 +33,7 @@ Full-stack production-grade app for India (Jaipur-first). pnpm monorepo with Typ
 - `pnpm run typecheck:libs` — build composite libs (run before api-server typecheck)
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks from OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- `pnpm --filter @workspace/scripts run qa` — run 126-check data integrity QA suite
+- `pnpm --filter @workspace/scripts run qa` — run 162-check data integrity QA suite
 - `pnpm --filter @workspace/scripts run seed` — seed 15 Jaipur venues + cities + slots
 - `pnpm --filter @workspace/scripts run migrate:sports` — migrate old sport slugs to canonical
 
@@ -50,7 +50,7 @@ lib/
 scripts/
   seed.ts             Seeds 15 Jaipur venues + 5 cities + 3080 slots
   migrate-sports.ts   Migrates old sport slugs to canonical 5-sport taxonomy
-  qa.ts               126-check data integrity suite
+  qa.ts               162-check data integrity suite
 ```
 
 ## Database Schema (19 tables)

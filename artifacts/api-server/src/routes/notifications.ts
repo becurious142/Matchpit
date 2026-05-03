@@ -78,4 +78,22 @@ router.post("/notifications/:id/read", requireAuth, async (req, res) => {
   }
 });
 
+router.post("/notifications/read-all", requireAuth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const profile = await getProfileByClerkId(userId!);
+    if (!profile) { res.status(404).json({ error: "not_found", message: "Profile not found" }); return; }
+
+    await db
+      .update(notificationsTable)
+      .set({ isRead: true })
+      .where(and(eq(notificationsTable.userId, profile.id), eq(notificationsTable.isRead, false)));
+
+    res.json({ success: true });
+  } catch (err) {
+    req.log.error({ err }, "Error marking all notifications read");
+    res.status(500).json({ error: "internal_error", message: "Failed to mark all read" });
+  }
+});
+
 export default router;

@@ -12,6 +12,7 @@ import { requireAuth, getProfileByClerkId } from "../lib/auth";
 import { razorpay, verifyRazorpaySignature, getRazorpayKeyId } from "../lib/razorpay";
 import { processReferralRewards, processFirstBookingCashback, processFirstMatchCashback } from "../lib/wallet";
 import { generateBookingPayout, generateMatchPayout } from "../lib/payouts";
+import { createNotification } from "../lib/notifications";
 
 const router: IRouter = Router();
 
@@ -182,6 +183,13 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
           }
           await processFirstBookingCashback(profile.id, referenceId);
           await processReferralRewards(profile.id);
+          await createNotification({
+            userId: profile.id,
+            type: "payment_success",
+            title: "Booking Confirmed!",
+            body: "Your turf booking is confirmed. Check your dashboard for details.",
+            referenceId,
+          });
         }
         if (type === "host_commitment" && referenceId) {
           const [match] = await db
@@ -194,9 +202,23 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
           }
           await processFirstMatchCashback(profile.id, referenceId);
           await processReferralRewards(profile.id);
+          await createNotification({
+            userId: profile.id,
+            type: "payment_success",
+            title: "Match Created!",
+            body: "Your hosted match is live. Share it to fill up your squad!",
+            referenceId,
+          });
         }
         if (type === "match_reserve" && referenceId) {
           await processReferralRewards(profile.id);
+          await createNotification({
+            userId: profile.id,
+            type: "payment_success",
+            title: "Spot Reserved!",
+            body: "You've secured your spot. Final payment due when the match is confirmed.",
+            referenceId,
+          });
         }
         if (type === "match_final" && referenceId) {
           const [match] = await db
@@ -207,6 +229,13 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
           if (match) {
             await generateMatchPayout(match.venueId, referenceId, Number(match.finalFeePerPlayer));
           }
+          await createNotification({
+            userId: profile.id,
+            type: "payment_success",
+            title: "Final Payment Done!",
+            body: "You're fully paid. See you on the pitch!",
+            referenceId,
+          });
         }
       } catch (triggerErr) {
         // Non-critical — log but don't fail the response
@@ -269,6 +298,95 @@ router.get("/payments/history", requireAuth, async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Error listing payments");
     res.status(500).json({ error: "internal_error", message: "Failed to list payments" });
+  }
+});
+
+// ─── List pending/stuck orders for current user ────────────────────────────
+router.get("/payments/pending", requireAuth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const profile = await getProfileByClerkId(userId!);
+    if (!profile) { res.status(404).json({ error: "not_found", message: "Profile not found" }); return; }
+
+    const pending = await db
+      .select()
+      .from(paymentsTable)
+      .where(and(eq(paymentsTable.userId, profile.id), eq(paymentsTable.status, "pending")))
+      .orderBy(desc(paymentsTable.createdAt))
+      .limit(20);
+
+    res.json(pending.map((p) => ({
+      id: p.id,
+      type: p.type,
+      referenceId: p.referenceId ?? null,
+      razorpayOrderId: p.razorpayOrderId ?? null,
+      amount: Number(p.amount),
+      status: p.status,
+      createdAt: p.createdAt.toISOString(),
+    })));
+  } catch (err) {
+    req.log.error({ err }, "Error listing pending payments");
+    res.status(500).json({ error: "internal_error", message: "Failed to list pending payments" });
+  }
+});
+
+// ─── Idempotent retry-verify for stuck/abandoned orders ───────────────────
+router.post("/payments/retry-verify", requireAuth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const profile = await getProfileByClerkId(userId!);
+    if (!profile) { res.status(404).json({ error: "not_found", message: "Profile not found" }); return; }
+
+    const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body;
+    if (!razorpayOrderId) {
+      res.status(400).json({ error: "missing_params", message: "razorpayOrderId is required" });
+      return;
+    }
+
+    const [existing] = await db
+      .select()
+      .from(paymentsTable)
+      .where(and(eq(paymentsTable.razorpayOrderId, razorpayOrderId), eq(paymentsTable.userId, profile.id)))
+      .limit(1);
+
+    if (!existing) {
+      res.status(404).json({ error: "not_found", message: "Payment order not found" });
+      return;
+    }
+
+    if (existing.status === "success") {
+      res.json({ success: true, alreadyVerified: true, paymentId: existing.id, type: existing.type, referenceId: existing.referenceId });
+      return;
+    }
+
+    if (razorpayPaymentId && razorpaySignature) {
+      const isValid = verifyRazorpaySignature(razorpayOrderId, razorpayPaymentId, razorpaySignature);
+      if (!isValid && process.env.RAZORPAY_KEY_SECRET) {
+        res.status(400).json({ error: "invalid_signature", message: "Payment verification failed" });
+        return;
+      }
+      const [updated] = await db
+        .update(paymentsTable)
+        .set({ razorpayPaymentId, razorpaySignature, status: "success", updatedAt: new Date() })
+        .where(eq(paymentsTable.id, existing.id))
+        .returning();
+      await maybeMarkParticipantPaid(existing.type, existing.referenceId, profile.id);
+      res.json({ success: true, alreadyVerified: false, paymentId: updated.id, type: updated.type, referenceId: updated.referenceId });
+    } else {
+      // Return the pending order details so client can re-open Razorpay
+      res.json({
+        success: false,
+        pending: true,
+        paymentId: existing.id,
+        type: existing.type,
+        referenceId: existing.referenceId,
+        razorpayOrderId: existing.razorpayOrderId,
+        amount: Number(existing.amount),
+      });
+    }
+  } catch (err) {
+    req.log.error({ err }, "Error retrying payment verification");
+    res.status(500).json({ error: "internal_error", message: "Failed to retry verification" });
   }
 });
 
