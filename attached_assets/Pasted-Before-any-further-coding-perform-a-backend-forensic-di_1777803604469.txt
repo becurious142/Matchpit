@@ -1,0 +1,85 @@
+Before any further coding, perform a backend forensic disclosure.
+
+Do not give me generic summaries or UI descriptions.
+
+I need exact proof of the deep transactional systems created in the previous phase.
+
+Provide a file-by-file technical audit with exact routes/functions/tables modified for the following 6 areas:
+
+====================================================
+
+1. WALLET LEDGER INTEGRATION PROOF
+   ====================================================
+
+Show exactly:
+
+* which payment routes now debit wallet
+* which verify callbacks credit/refund wallet
+* where mixed wallet + Razorpay reconciliation happens
+* what prevents wallet double debit on failed verify
+* exact files modified
+
+Need concrete route names and function names.
+
+====================================================
+2. REFERRAL REWARD ENGINE PROOF
+===============================
+
+Show exactly:
+
+* where referred_by is stored during signup
+* what backend function detects first successful paid transaction
+* where wallet rewards are credited to referrer and referee
+* what prevents duplicate referral rewards
+* exact files modified
+
+====================================================
+3. HOSTED MATCH UNDERFILL / REFUND ENGINE PROOF
+===============================================
+
+Show exactly:
+
+* what cron/job checks lock deadline failures
+* what code marks match cancelled_underfilled
+* what function issues reserve fee refunds
+* what function refunds host commitment fee
+* whether refunds go to wallet or payment source placeholder
+* exact files modified
+
+====================================================
+4. VENUE PAYOUT AUTOMATION PROOF
+================================
+
+Show exactly:
+
+* what payment success callbacks generate venue_payout_ledger rows
+* what generates platform_revenue_ledger rows
+* whether private booking and hosted match both feed this
+* exact files modified
+
+====================================================
+5. BADGE COMPUTATION PROOF
+==========================
+
+Show exactly:
+
+* where badges are computed
+* whether computed dynamically or stored
+* what metrics determine each badge
+* exact files modified
+
+====================================================
+6. QA PROOF
+===========
+
+Out of 106 QA checks, list the exact commerce-critical assertions added for:
+
+* wallet
+* referral
+* underfill refunds
+* payouts
+* badges
+
+I need implementation evidence, not a high-level summary.
+
+If any of the above is incomplete, continue coding until complete before replying.
