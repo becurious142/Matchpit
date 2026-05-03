@@ -1,15 +1,18 @@
 import { useParams, useLocation } from "wouter";
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useGetVenue, useGetVenueSlots, useCreatePaymentOrder, useVerifyPayment, useCreateBooking } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { Calendar, Clock, MapPin, CheckCircle2 } from "lucide-react";
+import { Calendar, Clock, MapPin, CheckCircle2, Wallet } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { loadRazorpay } from "@/lib/razorpay";
+
+interface WalletData { balance: number; walletAutoUse: boolean; }
 
 export default function Book() {
   const { venueId, slotId } = useParams<{ venueId: string, slotId: string }>();
@@ -19,15 +22,23 @@ export default function Book() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [selectedSport, setSelectedSport] = useState<string | null>(null);
+  const [useWallet, setUseWallet] = useState<boolean | null>(null);
 
   const { data: venue, isLoading: loadingVenue } = useGetVenue(venueId!);
   
-  // We need the slot details, so we fetch slots for a wide range to find it
-  // In a real app, there would be a getSlot endpoint
   const fromDate = format(new Date(), 'yyyy-MM-dd');
   const { data: slotsData } = useGetVenueSlots(venueId!, { from: fromDate });
-  
   const slot = slotsData?.flatMap(d => d.slots).find(s => s.id === slotId);
+
+  const { data: walletData } = useQuery<WalletData>({
+    queryKey: ["wallet-mini"],
+    queryFn: async () => {
+      const res = await fetch("/api/wallet");
+      if (!res.ok) return { balance: 0, walletAutoUse: false };
+      const data = await res.json();
+      return { balance: data.balance, walletAutoUse: data.walletAutoUse };
+    },
+  });
 
   const createPaymentOrder = useCreatePaymentOrder();
   const verifyPayment = useVerifyPayment();
@@ -38,17 +49,53 @@ export default function Book() {
   const platformFee = 49;
   const totalAmount = price + platformFee;
 
+  const walletBalance = walletData?.balance ?? 0;
+  const walletEnabled = useWallet ?? (walletData?.walletAutoUse ?? false);
+  const walletAmountUsed = walletEnabled ? Math.min(walletBalance, totalAmount) : 0;
+  const razorpayAmount = Math.max(0, totalAmount - walletAmountUsed);
+
+  const handleWalletOnlyPayment = async () => {
+    if (!venue || !slot) return;
+    setIsProcessing(true);
+    try {
+      await createBooking.mutateAsync({
+        data: {
+          venueId: venue.id,
+          slotId: slot.id,
+          sport,
+          razorpayOrderId: `wallet_${Date.now()}`,
+          razorpayPaymentId: "",
+          razorpaySignature: "",
+          walletAmountUsed: totalAmount,
+        } as any
+      });
+      await queryClient.invalidateQueries({ queryKey: ["bookings"] });
+      await queryClient.invalidateQueries({ queryKey: ["getVenueSlots", venueId] });
+      await queryClient.invalidateQueries({ queryKey: ["wallet"] });
+      setIsSuccess(true);
+      toast({ title: "Booking Confirmed! 🎯", description: "Paid with wallet balance." });
+      setTimeout(() => setLocation("/dashboard/bookings"), 3000);
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message || "Failed to book", variant: "destructive" });
+      setIsProcessing(false);
+    }
+  };
+
   const handlePayment = async () => {
     if (!venue || !slot) return;
+
+    if (razorpayAmount === 0) {
+      await handleWalletOnlyPayment();
+      return;
+    }
     
     setIsProcessing(true);
     try {
-      // 1. Create order on backend
       const order = await createPaymentOrder.mutateAsync({
         data: {
           type: "booking",
-          referenceId: slotId!, // using slotId as reference for booking
-          amount: totalAmount
+          referenceId: slotId!,
+          amount: razorpayAmount
         }
       });
 
@@ -87,7 +134,6 @@ export default function Book() {
               }
             });
 
-            // 5. Create booking
             await createBooking.mutateAsync({
               data: {
                 venueId: venue.id,
@@ -95,8 +141,9 @@ export default function Book() {
                 sport,
                 razorpayOrderId: response.razorpay_order_id,
                 razorpayPaymentId: response.razorpay_payment_id,
-                razorpaySignature: response.razorpay_signature
-              }
+                razorpaySignature: response.razorpay_signature,
+                walletAmountUsed: walletAmountUsed > 0 ? walletAmountUsed : undefined,
+              } as any
             });
 
             // Invalidate stale queries so bookings + slots reflect new state
@@ -263,7 +310,7 @@ export default function Book() {
             <CardContent className="p-6">
               <h3 className="font-bold uppercase tracking-wider mb-6">Payment Summary</h3>
               
-              <div className="space-y-4 text-sm mb-6">
+              <div className="space-y-4 text-sm mb-4">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Turf Fee (1 hour)</span>
                   <span className="font-medium">₹{price}</span>
@@ -272,12 +319,35 @@ export default function Book() {
                   <span className="text-muted-foreground">Platform Fee</span>
                   <span className="font-medium">₹{platformFee}</span>
                 </div>
+                {walletAmountUsed > 0 && (
+                  <div className="flex justify-between text-green-400">
+                    <span>Wallet Discount</span>
+                    <span className="font-bold">-₹{walletAmountUsed.toFixed(2)}</span>
+                  </div>
+                )}
                 <Separator className="my-2" />
                 <div className="flex justify-between text-lg font-bold">
-                  <span>Total Amount</span>
-                  <span className="text-primary">₹{totalAmount}</span>
+                  <span>Total Due</span>
+                  <span className="text-primary">₹{razorpayAmount.toFixed(2)}</span>
                 </div>
               </div>
+
+              {walletBalance > 0 && (
+                <div className="flex items-center justify-between p-3 mb-4 rounded-xl border border-primary/20 bg-primary/5">
+                  <div className="flex items-center gap-2">
+                    <Wallet className="w-4 h-4 text-primary" />
+                    <div>
+                      <p className="font-bold text-xs">Use Wallet</p>
+                      <p className="text-[10px] text-muted-foreground">₹{walletBalance.toFixed(2)} available</p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={walletEnabled}
+                    onCheckedChange={(v) => setUseWallet(v)}
+                    disabled={isProcessing}
+                  />
+                </div>
+              )}
 
               <Button 
                 className="w-full h-14 text-lg font-bold uppercase italic shadow-lg shadow-primary/20" 
@@ -285,7 +355,11 @@ export default function Book() {
                 onClick={handlePayment}
                 disabled={isProcessing}
               >
-                {isProcessing ? "Processing..." : `Pay ₹${totalAmount}`}
+                {isProcessing
+                  ? "Processing..."
+                  : razorpayAmount === 0
+                  ? "Pay with Wallet"
+                  : `Pay ₹${razorpayAmount.toFixed(2)}`}
               </Button>
               <p className="text-center text-xs text-muted-foreground mt-4">
                 Secure payments powered by Razorpay

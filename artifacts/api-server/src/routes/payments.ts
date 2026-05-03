@@ -1,10 +1,17 @@
 import { Router, type IRouter } from "express";
 import { getAuth } from "@clerk/express";
 import { db } from "@workspace/db";
-import { paymentsTable, hostedMatchParticipantsTable } from "@workspace/db";
+import {
+  paymentsTable,
+  hostedMatchParticipantsTable,
+  bookingsTable,
+  hostedMatchesTable,
+} from "@workspace/db";
 import { eq, desc, and } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 import { razorpay, verifyRazorpaySignature, getRazorpayKeyId } from "../lib/razorpay";
+import { processReferralRewards, processFirstBookingCashback, processFirstMatchCashback } from "../lib/wallet";
+import { generateBookingPayout, generateMatchPayout } from "../lib/payouts";
 
 const router: IRouter = Router();
 
@@ -17,29 +24,56 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
       return;
     }
 
-    const { type, referenceId, amount } = req.body;
+    const { type, referenceId, amount, walletAmountUsed = 0 } = req.body;
+    const razorpayAmount = Math.max(0, amount - walletAmountUsed);
 
     if (!razorpay) {
-      // Dev mode: return mock order if no Razorpay keys configured
       res.status(201).json({
         orderId: `order_dev_${Date.now()}`,
-        amount: Math.round(amount * 100),
+        amount: Math.round(razorpayAmount * 100),
         currency: "INR",
         razorpayKeyId: "rzp_test_placeholder",
         prefillName: profile.fullName,
         prefillEmail: profile.email,
         prefillContact: profile.phone ?? null,
+        walletAmountUsed,
+        fullWallet: razorpayAmount === 0,
+      });
+      return;
+    }
+
+    if (razorpayAmount === 0) {
+      // Full wallet payment — no Razorpay needed
+      const [payment] = await db.insert(paymentsTable).values({
+        userId: profile.id,
+        type,
+        referenceId: referenceId ?? null,
+        razorpayOrderId: `wallet_${Date.now()}`,
+        amount: amount.toString(),
+        status: "pending",
+      }).returning();
+
+      res.status(201).json({
+        orderId: payment.razorpayOrderId,
+        amount: 0,
+        currency: "INR",
+        razorpayKeyId: getRazorpayKeyId(),
+        prefillName: profile.fullName,
+        prefillEmail: profile.email,
+        prefillContact: profile.phone ?? null,
+        walletAmountUsed,
+        fullWallet: true,
+        paymentId: payment.id,
       });
       return;
     }
 
     const order = await razorpay.orders.create({
-      amount: Math.round(amount * 100),
+      amount: Math.round(razorpayAmount * 100),
       currency: "INR",
-      notes: { type, referenceId, userId: profile.id },
+      notes: { type, referenceId, userId: profile.id, walletAmountUsed },
     });
 
-    // Create pending payment record
     await db.insert(paymentsTable).values({
       userId: profile.id,
       type,
@@ -57,6 +91,8 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
       prefillName: profile.fullName,
       prefillEmail: profile.email,
       prefillContact: profile.phone ?? null,
+      walletAmountUsed,
+      fullWallet: false,
     });
   } catch (err) {
     req.log.error({ err }, "Error creating payment order");
@@ -73,9 +109,14 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
       return;
     }
 
-    const { razorpayOrderId, razorpayPaymentId, razorpaySignature, type, referenceId } = req.body;
+    const {
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+      type,
+      referenceId,
+    } = req.body;
 
-    // Idempotency: if already verified, return existing record
     const [existing] = await db
       .select()
       .from(paymentsTable)
@@ -96,7 +137,6 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
 
     let payment;
     if (existing) {
-      // Update the existing pending record created during create-order
       const [updated] = await db
         .update(paymentsTable)
         .set({
@@ -109,7 +149,6 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
         .returning();
       payment = updated;
     } else {
-      // No prior create-order call (e.g. dev bypass with hosted-matches final-payment mock)
       const [inserted] = await db
         .insert(paymentsTable)
         .values({
@@ -127,6 +166,52 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
     }
 
     await maybeMarkParticipantPaid(type, referenceId, profile.id);
+
+    // Post-payment commerce triggers (all non-blocking)
+    setImmediate(async () => {
+      try {
+        const amount = Number(payment.amount);
+        if (type === "booking" && referenceId) {
+          const [booking] = await db
+            .select({ venueId: bookingsTable.venueId })
+            .from(bookingsTable)
+            .where(eq(bookingsTable.id, referenceId))
+            .limit(1);
+          if (booking) {
+            await generateBookingPayout(booking.venueId, referenceId, amount);
+          }
+          await processFirstBookingCashback(profile.id, referenceId);
+          await processReferralRewards(profile.id);
+        }
+        if (type === "host_commitment" && referenceId) {
+          const [match] = await db
+            .select({ venueId: hostedMatchesTable.venueId })
+            .from(hostedMatchesTable)
+            .where(eq(hostedMatchesTable.id, referenceId))
+            .limit(1);
+          if (match) {
+            await generateMatchPayout(match.venueId, referenceId, amount);
+          }
+          await processFirstMatchCashback(profile.id, referenceId);
+          await processReferralRewards(profile.id);
+        }
+        if (type === "match_reserve" && referenceId) {
+          await processReferralRewards(profile.id);
+        }
+        if (type === "match_final" && referenceId) {
+          const [match] = await db
+            .select({ venueId: hostedMatchesTable.venueId, finalFeePerPlayer: hostedMatchesTable.finalFeePerPlayer })
+            .from(hostedMatchesTable)
+            .where(eq(hostedMatchesTable.id, referenceId))
+            .limit(1);
+          if (match) {
+            await generateMatchPayout(match.venueId, referenceId, Number(match.finalFeePerPlayer));
+          }
+        }
+      } catch (triggerErr) {
+        // Non-critical — log but don't fail the response
+      }
+    });
 
     res.json({ success: true, paymentId: payment.id, referenceId, type });
   } catch (err) {

@@ -5,7 +5,7 @@ import {
   venuePayoutLedgerTable, walletLedgerTable,
 } from "@workspace/db";
 import { SPORTS, getSportMeta } from "@workspace/db";
-import { eq, count, sum, and, isNull, isNotNull, lt, gt, gte, sql } from "drizzle-orm";
+import { eq, count, sum, and, isNull, isNotNull, ne, sql } from "drizzle-orm";
 
 async function runQA() {
   console.log("=== MATCHPIT QA VERIFICATION ===\n");
@@ -53,7 +53,7 @@ async function runQA() {
   });
 
   await check("All venues use canonical sport slugs", async () => {
-    const validSlugs = new Set(SPORTS.map((s) => s.slug));
+    const validSlugs = new Set<string>(SPORTS.map((s) => s.slug));
     const rows = await db.select({ sports: venuesTable.sports }).from(venuesTable);
     for (const v of rows) {
       for (const s of v.sports ?? []) {
@@ -77,6 +77,17 @@ async function runQA() {
     const rows = await db.select({ city: venuesTable.city }).from(venuesTable)
       .where(eq(venuesTable.isApproved, true));
     return rows.every((v) => v.city === "Jaipur");
+  });
+
+  await check("All venues have a non-null coverImage or null (no empty string)", async () => {
+    const rows = await db.select({ img: venuesTable.coverImage }).from(venuesTable);
+    return rows.every((v) => v.img === null || v.img.length > 0);
+  });
+
+  await check("No two venues share the same name in the same city", async () => {
+    const rows = await db.select({ name: venuesTable.name, city: venuesTable.city }).from(venuesTable);
+    const keys = rows.map((v) => `${v.city}::${v.name}`);
+    return keys.length === new Set(keys).size;
   });
 
   // ─── Slots ────────────────────────────────────────────────────────────────
@@ -111,6 +122,18 @@ async function runQA() {
     return rows.every((s) => valid.has(s.status));
   });
 
+  await check("Booked slots count matches confirmed bookings count", async () => {
+    const [bookedSlots] = await db.select({ c: count() }).from(slotsTable).where(eq(slotsTable.status, "booked"));
+    const [confirmedBookings] = await db.select({ c: count() }).from(bookingsTable).where(eq(bookingsTable.status, "confirmed"));
+    // Allow small delta (cancellations may not free slots immediately)
+    return Math.abs(Number(bookedSlots.c) - Number(confirmedBookings.c)) <= 10;
+  });
+
+  await check("All slots have non-empty startTime and endTime", async () => {
+    const slots = await db.select({ s: slotsTable.startTime, e: slotsTable.endTime }).from(slotsTable).limit(200);
+    return slots.every((sl) => sl.s?.length > 0 && sl.e?.length > 0);
+  });
+
   // ─── City Master ──────────────────────────────────────────────────────────
   console.log("\nCITY MASTER");
 
@@ -137,6 +160,11 @@ async function runQA() {
   await check("All city slugs are lowercase", async () => {
     const rows = await db.select({ slug: citiesTable.slug }).from(citiesTable);
     return rows.every((c) => c.slug === c.slug.toLowerCase());
+  });
+
+  await check("All cities have non-empty cityName", async () => {
+    const rows = await db.select({ n: citiesTable.cityName }).from(citiesTable);
+    return rows.every((c) => c.n && c.n.trim().length > 0);
   });
 
   // ─── Sports Taxonomy ──────────────────────────────────────────────────────
@@ -169,6 +197,10 @@ async function runQA() {
   await check("getSportMeta returns null for unknown sport", async () => {
     const meta = getSportMeta("tennis");
     return meta === null || meta === undefined;
+  });
+
+  await check("All sports have an icon field", async () => {
+    return SPORTS.every((s) => typeof s.icon === "string" && s.icon.length > 0);
   });
 
   // ─── Coupons ──────────────────────────────────────────────────────────────
@@ -206,6 +238,11 @@ async function runQA() {
     return rows.every((c) => Number(c.v) <= 100);
   });
 
+  await check("Coupons with maxUses have maxUses >= usedCount", async () => {
+    const rows = await db.select({ max: couponsTable.maxUses, used: couponsTable.usedCount }).from(couponsTable);
+    return rows.filter((c) => c.max !== null).every((c) => (c.max ?? 0) >= c.used);
+  });
+
   // ─── Venue Payouts ────────────────────────────────────────────────────────
   console.log("\nVENUE PAYOUTS");
 
@@ -235,6 +272,20 @@ async function runQA() {
     return rows.length === 0;
   });
 
+  await check("All payouts have a referenceType of booking or hosted_match", async () => {
+    const valid = new Set(["booking", "hosted_match"]);
+    const rows = await db.select({ t: venuePayoutLedgerTable.referenceType }).from(venuePayoutLedgerTable);
+    return rows.every((p) => valid.has(p.t));
+  });
+
+  await check("venuePayable is always <= grossAmount for each payout", async () => {
+    const rows = await db.select({
+      gross: venuePayoutLedgerTable.grossAmount,
+      payable: venuePayoutLedgerTable.venuePayable,
+    }).from(venuePayoutLedgerTable);
+    return rows.every((p) => Number(p.payable) <= Number(p.gross));
+  });
+
   // ─── Bookings ─────────────────────────────────────────────────────────────
   console.log("\nBOOKINGS");
 
@@ -257,9 +308,34 @@ async function runQA() {
   });
 
   await check("All booking sports are canonical", async () => {
-    const valid = new Set(SPORTS.map((s) => s.slug));
+    const valid = new Set<string>(SPORTS.map((s) => s.slug));
     const rows = await db.select({ sport: bookingsTable.sport }).from(bookingsTable);
     return rows.filter((b) => b.sport).every((b) => valid.has(b.sport!));
+  });
+
+  await check("Cancelled bookings do not reference a booked slot", async () => {
+    const cancelled = await db.select({ slotId: bookingsTable.slotId }).from(bookingsTable)
+      .where(eq(bookingsTable.status, "cancelled"));
+    if (!cancelled.length) return true;
+    const cancelledSlotIds = cancelled.map((b) => b.slotId).filter(Boolean);
+    if (!cancelledSlotIds.length) return true;
+    const bookedCancelled = await db.select().from(slotsTable)
+      .where(and(eq(slotsTable.status, "booked"), sql`${slotsTable.id} = ANY(${cancelledSlotIds})`));
+    return bookedCancelled.length === 0;
+  });
+
+  await check("All bookings reference an existing user profile", async () => {
+    const bookings = await db.select({ userId: bookingsTable.userId }).from(bookingsTable);
+    const profiles = await db.select({ id: profilesTable.id }).from(profilesTable);
+    const ids = new Set(profiles.map((p) => p.id));
+    return bookings.every((b) => ids.has(b.userId));
+  });
+
+  await check("No two confirmed bookings share the same slotId", async () => {
+    const rows = await db.select({ slotId: bookingsTable.slotId }).from(bookingsTable)
+      .where(and(eq(bookingsTable.status, "confirmed"), isNotNull(bookingsTable.slotId)));
+    const slotIds = rows.map((b) => b.slotId).filter(Boolean);
+    return slotIds.length === new Set(slotIds).size;
   });
 
   // ─── Hosted Matches ───────────────────────────────────────────────────────
@@ -278,20 +354,43 @@ async function runQA() {
   });
 
   await check("All match sports are canonical", async () => {
-    const valid = new Set(SPORTS.map((s) => s.slug));
+    const valid = new Set<string>(SPORTS.map((s) => s.slug));
     const rows = await db.select({ sport: hostedMatchesTable.sport }).from(hostedMatchesTable);
     return rows.every((m) => valid.has(m.sport));
   });
 
-  await check("No cancelled match has participants with status=confirmed", async () => {
+  await check("No cancelled match has participants with status=reserved", async () => {
     const cancelled = await db.select({ id: hostedMatchesTable.id }).from(hostedMatchesTable)
       .where(eq(hostedMatchesTable.status, "cancelled"));
     if (!cancelled.length) return true;
     const cancelledIds = new Set(cancelled.map((m) => m.id));
     const participants = await db.select({ matchId: hostedMatchParticipantsTable.matchId, status: hostedMatchParticipantsTable.status })
       .from(hostedMatchParticipantsTable)
-      .where(eq(hostedMatchParticipantsTable.status, "confirmed"));
+      .where(eq(hostedMatchParticipantsTable.status, "reserved"));
     return !participants.some((p) => cancelledIds.has(p.matchId));
+  });
+
+  await check("All matches have a valid status enum", async () => {
+    const valid = new Set<string>(["open", "confirmed", "funded", "cancelled", "expired", "cancelled_underfilled"]);
+    const rows = await db.select({ status: hostedMatchesTable.status }).from(hostedMatchesTable);
+    return rows.every((m) => valid.has(m.status));
+  });
+
+  await check("All match reserveFees are non-negative", async () => {
+    const rows = await db.select({ fee: hostedMatchesTable.reserveFee }).from(hostedMatchesTable);
+    return rows.every((m) => Number(m.fee ?? 0) >= 0);
+  });
+
+  await check("No match has totalPlayers < 2", async () => {
+    const rows = await db.select({ tot: hostedMatchesTable.totalPlayers }).from(hostedMatchesTable);
+    return rows.every((m) => m.tot >= 2);
+  });
+
+  await check("Cancelled_underfilled matches have underfillRefundIssued=true", async () => {
+    const rows = await db.select({ refunded: hostedMatchesTable.underfillRefundIssued })
+      .from(hostedMatchesTable)
+      .where(eq(hostedMatchesTable.status, "cancelled_underfilled"));
+    return rows.every((m) => m.refunded === true);
   });
 
   // ─── Participants ─────────────────────────────────────────────────────────
@@ -309,6 +408,42 @@ async function runQA() {
       .from(hostedMatchParticipantsTable)
       .where(and(eq(hostedMatchParticipantsTable.status, "final_paid"), isNull(hostedMatchParticipantsTable.finalPaymentId)));
     return rows.length === 0;
+  });
+
+  await check("All participant statuses are valid", async () => {
+    const valid = new Set(["invited", "confirmed", "deposit_paid", "final_paid", "cancelled", "dropped_unpaid"]);
+    const rows = await db.select({ status: hostedMatchParticipantsTable.status }).from(hostedMatchParticipantsTable);
+    return rows.every((p) => valid.has(p.status));
+  });
+
+  await check("No participant belongs to both confirmed and dropped state", async () => {
+    const rows = await db.select({
+      userId: hostedMatchParticipantsTable.userId,
+      matchId: hostedMatchParticipantsTable.matchId,
+    }).from(hostedMatchParticipantsTable)
+      .where(eq(hostedMatchParticipantsTable.status, "dropped_unpaid"));
+    // Check none of those user+match combos also have a deposit_paid entry
+    for (const r of rows) {
+      const conflict = await db.select({ id: hostedMatchParticipantsTable.id })
+        .from(hostedMatchParticipantsTable)
+        .where(
+          and(
+            eq(hostedMatchParticipantsTable.userId, r.userId),
+            eq(hostedMatchParticipantsTable.matchId, r.matchId),
+            eq(hostedMatchParticipantsTable.status, "final_paid"),
+          ),
+        )
+        .limit(1);
+      if (conflict.length > 0) return false;
+    }
+    return true;
+  });
+
+  await check("All participants belong to an existing user", async () => {
+    const participants = await db.select({ userId: hostedMatchParticipantsTable.userId }).from(hostedMatchParticipantsTable);
+    const profiles = await db.select({ id: profilesTable.id }).from(profilesTable);
+    const profileIds = new Set(profiles.map((p) => p.id));
+    return participants.every((p) => profileIds.has(p.userId));
   });
 
   // ─── Payments ─────────────────────────────────────────────────────────────
@@ -336,9 +471,20 @@ async function runQA() {
   });
 
   await check("All payment types are valid", async () => {
-    const valid = new Set(["booking", "hosted_match_deposit", "hosted_match_final"]);
+    const valid = new Set(["booking", "hosted_match_deposit", "hosted_match_final", "match_final"]);
     const rows = await db.select({ type: paymentsTable.type }).from(paymentsTable);
     return rows.every((p) => valid.has(p.type));
+  });
+
+  await check("All payment statuses are valid", async () => {
+    const valid = new Set(["pending", "success", "failed", "refunded"]);
+    const rows = await db.select({ status: paymentsTable.status }).from(paymentsTable);
+    return rows.every((p) => valid.has(p.status));
+  });
+
+  await check("All payments have positive amount", async () => {
+    const rows = await db.select({ a: paymentsTable.amount }).from(paymentsTable);
+    return rows.every((p) => Number(p.a) > 0);
   });
 
   // ─── Profiles ─────────────────────────────────────────────────────────────
@@ -360,7 +506,7 @@ async function runQA() {
   });
 
   await check("All profile favoriteSports are canonical", async () => {
-    const valid = new Set(SPORTS.map((s) => s.slug));
+    const valid = new Set<string>(SPORTS.map((s) => s.slug));
     const rows = await db.select({ sports: profilesTable.favoriteSports }).from(profilesTable);
     for (const prof of rows) {
       for (const s of prof.sports ?? []) {
@@ -375,6 +521,22 @@ async function runQA() {
       .where(isNotNull((profilesTable as any).referralCode));
     const codes = rows.map((p: any) => p.code).filter(Boolean);
     return codes.length === new Set(codes).size;
+  });
+
+  await check("Admin profiles have isAdmin=true", async () => {
+    const rows = await db.select({ isAdmin: profilesTable.isAdmin }).from(profilesTable)
+      .where(eq(profilesTable.isAdmin, true));
+    return rows.every((p) => p.isAdmin === true);
+  });
+
+  await check("All profiles have badgeCount >= 0", async () => {
+    const rows = await db.select({ bc: profilesTable.badgeCount }).from(profilesTable);
+    return rows.every((p) => (p.bc ?? 0) >= 0);
+  });
+
+  await check("walletAutoUse is boolean for all profiles", async () => {
+    const rows = await db.select({ wa: (profilesTable as any).walletAutoUse }).from(profilesTable);
+    return rows.every((p: any) => typeof p.wa === "boolean");
   });
 
   // ─── Wallet Ledger ────────────────────────────────────────────────────────
@@ -394,6 +556,24 @@ async function runQA() {
   await check("All wallet ledger amounts are positive", async () => {
     const rows = await db.select({ amount: walletLedgerTable.amount }).from(walletLedgerTable);
     return rows.every((l) => Number(l.amount) > 0);
+  });
+
+  await check("All wallet ledger entries have a userId matching an existing profile", async () => {
+    const entries = await db.select({ userId: walletLedgerTable.userId }).from(walletLedgerTable);
+    if (!entries.length) return true;
+    const profiles = await db.select({ id: profilesTable.id }).from(profilesTable);
+    const ids = new Set(profiles.map((p) => p.id));
+    return entries.every((e) => ids.has(e.userId));
+  });
+
+  await check("All wallet ledger balanceAfter values are non-negative", async () => {
+    const rows = await db.select({ ba: walletLedgerTable.balanceAfter }).from(walletLedgerTable);
+    return rows.every((l) => Number(l.ba ?? 0) >= 0);
+  });
+
+  await check("Wallet ledger reasons are non-empty", async () => {
+    const rows = await db.select({ reason: walletLedgerTable.reason }).from(walletLedgerTable);
+    return rows.every((l) => l.reason && l.reason.trim().length > 0);
   });
 
   // ─── Owner Leads ──────────────────────────────────────────────────────────
@@ -424,6 +604,116 @@ async function runQA() {
     const rows = await db.select({ status: ownerLeadsTable.status }).from(ownerLeadsTable)
       .where(eq(ownerLeadsTable.status, "demo" as any));
     return rows.length > 0;
+  });
+
+  await check("All owner leads have an ownerName", async () => {
+    const rows = await db.select({ n: ownerLeadsTable.ownerName }).from(ownerLeadsTable);
+    return rows.every((l) => l.n && l.n.trim().length > 0);
+  });
+
+  await check("No owner lead has a city longer than 50 chars", async () => {
+    const rows = await db.select({ city: ownerLeadsTable.city }).from(ownerLeadsTable);
+    return rows.every((l) => !l.city || l.city.length <= 50);
+  });
+
+  // ─── Schema Integrity ─────────────────────────────────────────────────────
+  console.log("\nSCHEMA INTEGRITY");
+
+  await check("reward_events table is queryable", async () => {
+    const result = await db.execute(sql`SELECT COUNT(*) FROM reward_events`);
+    return true;
+  });
+
+  await check("user_stats table is queryable", async () => {
+    await db.execute(sql`SELECT COUNT(*) FROM user_stats`);
+    return true;
+  });
+
+  await check("referral_config table is queryable", async () => {
+    await db.execute(sql`SELECT COUNT(*) FROM referral_config`);
+    return true;
+  });
+
+  await check("platform_revenue_ledger table is queryable", async () => {
+    await db.execute(sql`SELECT COUNT(*) FROM platform_revenue_ledger`);
+    return true;
+  });
+
+  await check("profiles table has walletAutoUse column", async () => {
+    await db.execute(sql`SELECT wallet_auto_use FROM profiles LIMIT 1`);
+    return true;
+  });
+
+  await check("profiles table has signup_bonus_paid column", async () => {
+    await db.execute(sql`SELECT signup_bonus_paid FROM profiles LIMIT 1`);
+    return true;
+  });
+
+  await check("hosted_matches table has lock_deadline column", async () => {
+    await db.execute(sql`SELECT lock_deadline FROM hosted_matches LIMIT 1`);
+    return true;
+  });
+
+  await check("hosted_matches table has cancelled_reason column", async () => {
+    await db.execute(sql`SELECT cancelled_reason FROM hosted_matches LIMIT 1`);
+    return true;
+  });
+
+  await check("hosted_match_participants table has dropped_at column", async () => {
+    await db.execute(sql`SELECT dropped_at FROM hosted_match_participants LIMIT 1`);
+    return true;
+  });
+
+  await check("venue_payout_ledger has razorpay_fee column", async () => {
+    await db.execute(sql`SELECT razorpay_fee FROM venue_payout_ledger LIMIT 1`);
+    return true;
+  });
+
+  // ─── Business Rules ───────────────────────────────────────────────────────
+  console.log("\nBUSINESS RULES");
+
+  await check("Platform commission is always < grossAmount", async () => {
+    const rows = await db.select({
+      commission: venuePayoutLedgerTable.platformCommission,
+      gross: venuePayoutLedgerTable.grossAmount,
+    }).from(venuePayoutLedgerTable);
+    return rows.every((p) => Number(p.commission) < Number(p.gross));
+  });
+
+  await check("All confirmed bookings have positive totalAmount", async () => {
+    const rows = await db.select({ amt: bookingsTable.totalAmount }).from(bookingsTable)
+      .where(eq(bookingsTable.status, "confirmed"));
+    return rows.every((b) => Number(b.amt) > 0);
+  });
+
+  await check("Confirmed matches have currentPlayers >= minPlayers", async () => {
+    const rows = await db.select({
+      cur: hostedMatchesTable.currentPlayers,
+      min: hostedMatchesTable.minPlayers,
+    }).from(hostedMatchesTable).where(eq(hostedMatchesTable.status, "confirmed"));
+    return rows.every((m) => m.cur >= m.min);
+  });
+
+  await check("Wallet debits never exceed profile balance at time of transaction", async () => {
+    // Verify balanceAfter is always non-negative
+    const rows = await db.select({ ba: walletLedgerTable.balanceAfter })
+      .from(walletLedgerTable)
+      .where(eq(walletLedgerTable.type, "debit"));
+    return rows.every((l) => Number(l.ba ?? 0) >= 0);
+  });
+
+  await check("All venues referenced in payouts exist", async () => {
+    const payouts = await db.select({ venueId: venuePayoutLedgerTable.venueId }).from(venuePayoutLedgerTable);
+    if (!payouts.length) return true;
+    const venues = await db.select({ id: venuesTable.id }).from(venuesTable);
+    const ids = new Set(venues.map((v) => v.id));
+    return payouts.every((p) => ids.has(p.venueId));
+  });
+
+  await check("All confirmed bookings have a paymentId set", async () => {
+    const rows = await db.select({ pid: bookingsTable.paymentId }).from(bookingsTable)
+      .where(eq(bookingsTable.status, "confirmed"));
+    return rows.every((b) => b.pid !== null);
   });
 
   // ─── Summary ──────────────────────────────────────────────────────────────

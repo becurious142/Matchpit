@@ -81,11 +81,23 @@ export default function Admin() {
   const [newCoupon, setNewCoupon] = useState({ code: "", type: "flat", value: "", maxUses: "" });
   const [creatingCoupon, setCreatingCoupon] = useState(false);
 
+  // ── Match Finance state ────────────────────────────────────────────────────
+  const [matchFinanceData, setMatchFinanceData] = useState<any[]>([]);
+  const [matchFinanceLoading, setMatchFinanceLoading] = useState(false);
+
+  // ── Referral Config state ──────────────────────────────────────────────────
+  const [referralConfig, setReferralConfig] = useState<any>(null);
+  const [referralConfigLoading, setReferralConfigLoading] = useState(false);
+  const [editableConfig, setEditableConfig] = useState<Record<string, string>>({});
+  const [savingReferralConfig, setSavingReferralConfig] = useState(false);
+
   useEffect(() => {
     if (!profile?.isAdmin) return;
     loadCities();
     loadFinance();
     loadCoupons();
+    loadMatchFinance();
+    loadReferralConfig();
   }, [profile?.isAdmin]);
 
   const loadCities = async () => {
@@ -114,6 +126,49 @@ export default function Admin() {
       const data = await adminFetch<Coupon[]>("/admin/coupons");
       setCoupons(data);
     } finally { setCouponsLoading(false); }
+  };
+
+  const loadMatchFinance = async () => {
+    setMatchFinanceLoading(true);
+    try {
+      const data = await adminFetch<any[]>("/admin/match-finance");
+      setMatchFinanceData(data);
+    } finally { setMatchFinanceLoading(false); }
+  };
+
+  const loadReferralConfig = async () => {
+    setReferralConfigLoading(true);
+    try {
+      const data = await adminFetch<any>("/admin/referral-config");
+      setReferralConfig(data);
+      setEditableConfig({
+        signupBonusAmount: String(data.signupBonusAmount ?? 50),
+        referrerRewardAmount: String(data.referrerRewardAmount ?? 100),
+        refereeRewardAmount: String(data.refereeRewardAmount ?? 50),
+        firstBookingCashback: String(data.firstBookingCashback ?? 30),
+        firstMatchCashback: String(data.firstMatchCashback ?? 30),
+      });
+    } finally { setReferralConfigLoading(false); }
+  };
+
+  const handleSaveReferralConfig = async () => {
+    setSavingReferralConfig(true);
+    try {
+      const updated = await adminFetch<any>("/admin/referral-config", {
+        method: "PATCH",
+        body: JSON.stringify({
+          signupBonusAmount: parseFloat(editableConfig.signupBonusAmount),
+          referrerRewardAmount: parseFloat(editableConfig.referrerRewardAmount),
+          refereeRewardAmount: parseFloat(editableConfig.refereeRewardAmount),
+          firstBookingCashback: parseFloat(editableConfig.firstBookingCashback),
+          firstMatchCashback: parseFloat(editableConfig.firstMatchCashback),
+        }),
+      });
+      setReferralConfig(updated);
+      toast({ title: "Referral config saved" });
+    } catch (e: any) {
+      toast({ title: e.message, variant: "destructive" });
+    } finally { setSavingReferralConfig(false); }
   };
 
   if (profileLoading) return <div className="p-8"><Skeleton className="h-64 w-full" /></div>;
@@ -271,6 +326,12 @@ export default function Admin() {
           </TabsTrigger>
           <TabsTrigger value="coupons" className="font-bold uppercase tracking-wider text-xs">
             <Tag className="w-3 h-3 mr-1" /> Coupons
+          </TabsTrigger>
+          <TabsTrigger value="matches" className="font-bold uppercase tracking-wider text-xs">
+            <BarChart3 className="w-3 h-3 mr-1" /> Match Finance
+          </TabsTrigger>
+          <TabsTrigger value="referral" className="font-bold uppercase tracking-wider text-xs">
+            <TrendingUp className="w-3 h-3 mr-1" /> Referral
           </TabsTrigger>
         </TabsList>
 
@@ -667,6 +728,126 @@ export default function Admin() {
             </div>
           </div>
         </TabsContent>
+        {/* ── Match Finance tab ──────────────────────────────────────────────── */}
+        <TabsContent value="matches">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-xl font-bold uppercase italic">Match Finance Inspector</h2>
+            <button
+              className="text-xs font-bold uppercase text-primary hover:underline"
+              onClick={loadMatchFinance}
+            >
+              Refresh
+            </button>
+          </div>
+          <div className="rounded-lg border border-border/50 overflow-hidden bg-card/30">
+            <Table>
+              <TableHeader className="bg-muted/60">
+                <TableRow>
+                  <TableHead>Match</TableHead>
+                  <TableHead>Sport</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Host</TableHead>
+                  <TableHead>Players</TableHead>
+                  <TableHead>Deposit Rev.</TableHead>
+                  <TableHead>Final Rev.</TableHead>
+                  <TableHead>Total Rev.</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {matchFinanceLoading ? (
+                  <TableRow><TableCell colSpan={8} className="text-center py-8"><Skeleton className="h-8 w-full" /></TableCell></TableRow>
+                ) : matchFinanceData.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">No hosted matches yet.</TableCell>
+                  </TableRow>
+                ) : matchFinanceData.map((m) => (
+                  <TableRow key={m.id}>
+                    <TableCell className="font-semibold max-w-[140px] truncate">{m.title}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="text-[10px] uppercase">{m.sport}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={m.status === "completed" ? "default" : m.status.startsWith("cancelled") ? "destructive" : "secondary"}
+                        className="text-[10px] uppercase font-bold"
+                      >
+                        {m.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-sm">{m.hostName}</TableCell>
+                    <TableCell className="font-mono text-sm">
+                      {m.depositPaidCount}/{m.totalPlayers}
+                    </TableCell>
+                    <TableCell className="font-mono">₹{m.depositRevenue.toLocaleString("en-IN")}</TableCell>
+                    <TableCell className="font-mono">₹{m.finalRevenue.toLocaleString("en-IN")}</TableCell>
+                    <TableCell className="font-mono font-bold text-primary">₹{m.totalRevenue.toLocaleString("en-IN")}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          {matchFinanceData.length > 0 && (
+            <div className="mt-4 grid grid-cols-3 gap-4">
+              {[
+                { label: "Total Deposit Revenue", value: matchFinanceData.reduce((acc, m) => acc + m.depositRevenue, 0) },
+                { label: "Total Final Revenue", value: matchFinanceData.reduce((acc, m) => acc + m.finalRevenue, 0) },
+                { label: "Total Match GMV", value: matchFinanceData.reduce((acc, m) => acc + m.totalRevenue, 0) },
+              ].map((item) => (
+                <Card key={item.label} className="bg-card/50 border-border/50 text-center">
+                  <CardContent className="p-4">
+                    <div className="text-2xl font-extrabold text-primary">₹{item.value.toLocaleString("en-IN")}</div>
+                    <div className="text-xs uppercase font-bold text-muted-foreground mt-1">{item.label}</div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ── Referral Config tab ─────────────────────────────────────────────── */}
+        <TabsContent value="referral">
+          <div className="max-w-xl space-y-6">
+            <h2 className="text-xl font-bold uppercase italic">Referral & Reward Config</h2>
+            {referralConfigLoading ? (
+              <Skeleton className="h-64 w-full" />
+            ) : (
+              <Card className="bg-card/50 border-border/50">
+                <CardContent className="p-6 space-y-5">
+                  {[
+                    { key: "signupBonusAmount", label: "Signup Bonus (₹)" },
+                    { key: "referrerRewardAmount", label: "Referrer Reward (₹)" },
+                    { key: "refereeRewardAmount", label: "Referee Welcome Credit (₹)" },
+                    { key: "firstBookingCashback", label: "First Booking Cashback (₹)" },
+                    { key: "firstMatchCashback", label: "First Match Cashback (₹)" },
+                  ].map(({ key, label }) => (
+                    <div key={key}>
+                      <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block mb-1">{label}</label>
+                      <Input
+                        type="number"
+                        value={editableConfig[key] ?? ""}
+                        onChange={(e) => setEditableConfig((prev) => ({ ...prev, [key]: e.target.value }))}
+                        className="h-10 font-mono"
+                      />
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between pt-2">
+                    <p className="text-xs text-muted-foreground">
+                      Last updated: {referralConfig?.updatedAt ? new Date(referralConfig.updatedAt).toLocaleString("en-IN") : "—"}
+                    </p>
+                    <Button
+                      onClick={handleSaveReferralConfig}
+                      disabled={savingReferralConfig}
+                      className="font-bold uppercase"
+                    >
+                      {savingReferralConfig ? "Saving..." : "Save Config"}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </TabsContent>
+
       </Tabs>
     </div>
   );

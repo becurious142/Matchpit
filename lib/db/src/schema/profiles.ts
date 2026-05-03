@@ -22,6 +22,7 @@ export const profilesTable = pgTable("profiles", {
   walletBalance: numeric("wallet_balance", { precision: 10, scale: 2 })
     .notNull()
     .default("0"),
+  walletAutoUse: boolean("wallet_auto_use").notNull().default(false),
   badgeCount: integer("badge_count").notNull().default(0),
   trustScore: numeric("trust_score", { precision: 5, scale: 2 })
     .notNull()
@@ -29,6 +30,7 @@ export const profilesTable = pgTable("profiles", {
   isAdmin: boolean("is_admin").notNull().default(false),
   referralCode: text("referral_code").unique(),
   referredBy: text("referred_by"),
+  signupBonusPaid: boolean("signup_bonus_paid").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

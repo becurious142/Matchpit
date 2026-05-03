@@ -1,8 +1,8 @@
 import { Router, type IRouter } from "express";
 import { getAuth } from "@clerk/express";
 import { db } from "@workspace/db";
-import { walletLedgerTable, profilesTable } from "@workspace/db";
-import { eq, desc, sum } from "drizzle-orm";
+import { walletLedgerTable, profilesTable, rewardEventsTable } from "@workspace/db";
+import { eq, desc } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 
 const router: IRouter = Router();
@@ -21,18 +21,26 @@ router.get("/wallet", requireAuth, async (req, res) => {
       .from(walletLedgerTable)
       .where(eq(walletLedgerTable.userId, profile.id))
       .orderBy(desc(walletLedgerTable.createdAt))
-      .limit(50);
+      .limit(100);
 
     const totalEarned = ledger
       .filter((e) => e.type === "credit")
-      .reduce((sum, e) => sum + Number(e.amount), 0);
+      .reduce((s, e) => s + Number(e.amount), 0);
 
     const totalSpent = ledger
       .filter((e) => e.type === "debit")
-      .reduce((sum, e) => sum + Number(e.amount), 0);
+      .reduce((s, e) => s + Number(e.amount), 0);
+
+    const rewards = await db
+      .select()
+      .from(rewardEventsTable)
+      .where(eq(rewardEventsTable.userId, profile.id))
+      .orderBy(desc(rewardEventsTable.createdAt))
+      .limit(20);
 
     res.json({
       balance: Number(profile.walletBalance),
+      walletAutoUse: profile.walletAutoUse,
       totalEarned,
       totalSpent,
       ledger: ledger.map((e) => ({
@@ -41,7 +49,15 @@ router.get("/wallet", requireAuth, async (req, res) => {
         reason: e.reason,
         amount: Number(e.amount),
         balanceAfter: Number(e.balanceAfter),
+        referenceId: e.referenceId ?? null,
         createdAt: e.createdAt.toISOString(),
+      })),
+      rewards: rewards.map((r) => ({
+        id: r.id,
+        eventType: r.eventType,
+        amount: Number(r.amount),
+        notes: r.notes ?? null,
+        createdAt: r.createdAt.toISOString(),
       })),
     });
   } catch (err) {

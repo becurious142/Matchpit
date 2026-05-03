@@ -614,4 +614,103 @@ router.post("/hosted-matches/:matchId/final-payment", requireAuth, async (req, r
   }
 });
 
+// ─── Cancel a Match ───────────────────────────────────────────────────────────
+
+router.post("/:matchId/cancel", requireAuth, async (req, res) => {
+  try {
+    const userId = getAuth(req).userId;
+    if (!userId) { res.status(401).json({ error: "unauthorized" }); return; }
+    const profile = await getProfileByClerkId(userId);
+    if (!profile) { res.status(404).json({ error: "not_found", message: "Profile not found" }); return; }
+
+    const matchId = req.params.matchId as string;
+    const { reason } = req.body as { reason?: string };
+
+    const [match] = await db
+      .select()
+      .from(hostedMatchesTable)
+      .where(eq(hostedMatchesTable.id, matchId))
+      .limit(1);
+
+    if (!match) { res.status(404).json({ error: "not_found", message: "Match not found" }); return; }
+
+    // Only host or admin can cancel
+    if (match.hostUserId !== profile.id && !profile.isAdmin) {
+      res.status(403).json({ error: "forbidden", message: "Only the host or an admin can cancel this match" });
+      return;
+    }
+
+    if (["cancelled", "cancelled_underfilled", "completed"].includes(match.status)) {
+      res.status(400).json({ error: "invalid_state", message: `Match is already ${match.status}` });
+      return;
+    }
+
+    // Fetch confirmed participants for refund
+    const participants = await db
+      .select()
+      .from(hostedMatchParticipantsTable)
+      .where(
+        and(
+          eq(hostedMatchParticipantsTable.matchId, matchId),
+          ne(hostedMatchParticipantsTable.status, "dropped_unpaid"),
+        ),
+      );
+
+    // Issue refunds for deposited participants
+    const cancelReason = reason ?? "Match cancelled by host";
+    for (const p of participants) {
+      if (["reserved", "final_paid"].includes(p.status) && p.reservePaymentId) {
+        try {
+          const { processCancellationRefund } = await import("../lib/wallet");
+          await processCancellationRefund(
+            p.userId,
+            p.id,
+            "hosted_match",
+            Number(match.reserveFee ?? 0),
+          );
+        } catch (e) {
+          req.log.warn({ err: e, participantId: p.id }, "Failed to refund participant on cancel");
+        }
+      }
+    }
+
+    // Mark all non-dropped participants as cancelled
+    await db
+      .update(hostedMatchParticipantsTable)
+      .set({ status: "cancelled" })
+      .where(
+        and(
+          eq(hostedMatchParticipantsTable.matchId, matchId),
+          ne(hostedMatchParticipantsTable.status, "dropped_unpaid"),
+        ),
+      );
+
+    // Update match status
+    const [updated] = await db
+      .update(hostedMatchesTable)
+      .set({
+        status: "cancelled",
+        cancelledReason: cancelReason,
+        underfillRefundIssued: true,
+      })
+      .where(eq(hostedMatchesTable.id, matchId))
+      .returning();
+
+    // Notify host
+    await db.insert(notificationsTable).values({
+      userId: match.hostUserId,
+      type: "match_cancelled",
+      title: "Match Cancelled",
+      body: `Your match has been cancelled. All participants have been refunded.`,
+      referenceId: matchId,
+    });
+
+    res.json({ matchId, status: updated.status, cancelledReason: updated.cancelledReason });
+  } catch (err) {
+    req.log.error({ err }, "Error cancelling match");
+    res.status(500).json({ error: "internal_error", message: "Failed to cancel match" });
+  }
+});
+
 export default router;
+

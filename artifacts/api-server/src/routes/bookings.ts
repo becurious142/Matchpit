@@ -12,6 +12,9 @@ import {
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 import { verifyRazorpaySignature } from "../lib/razorpay";
+import { debitWallet } from "../lib/wallet";
+import { generateBookingPayout } from "../lib/payouts";
+import { processFirstBookingCashback, processReferralRewards } from "../lib/wallet";
 
 const router: IRouter = Router();
 
@@ -79,10 +82,7 @@ router.get("/bookings", requireAuth, async (req, res) => {
     const venueIds = [...new Set(bookings.map((b) => b.venueId))];
     const venues =
       venueIds.length > 0
-        ? await db
-            .select()
-            .from(venuesTable)
-            .where(inArray(venuesTable.id, venueIds))
+        ? await db.select().from(venuesTable).where(inArray(venuesTable.id, venueIds))
         : [];
     const venueMap = new Map(venues.map((v) => [v.id, v]));
 
@@ -102,29 +102,30 @@ router.post("/bookings", requireAuth, async (req, res) => {
       return;
     }
 
-    const { venueId, slotId, sport, razorpayOrderId, razorpayPaymentId, razorpaySignature } =
-      req.body;
+    const {
+      venueId,
+      slotId,
+      sport,
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+      walletAmountUsed = 0,
+    } = req.body;
 
-    // Verify Razorpay signature (dev mode: allow through if no secret configured)
     const isValid = verifyRazorpaySignature(razorpayOrderId, razorpayPaymentId, razorpaySignature);
-    if (!isValid && process.env.RAZORPAY_KEY_SECRET) {
+    if (!isValid && process.env.RAZORPAY_KEY_SECRET && walletAmountUsed === 0) {
       res.status(400).json({ error: "invalid_signature", message: "Payment signature invalid" });
       return;
     }
 
-    // Get venue for pricing (outside transaction — read-only)
-    const [venue] = await db
-      .select()
-      .from(venuesTable)
-      .where(eq(venuesTable.id, venueId))
-      .limit(1);
-
+    const [venue] = await db.select().from(venuesTable).where(eq(venuesTable.id, venueId)).limit(1);
     if (!venue) {
       res.status(404).json({ error: "not_found", message: "Venue not found" });
       return;
     }
 
-    // Wrap slot check + booking in a transaction to prevent double-booking race conditions
+    const walletUsed = Math.min(Number(walletAmountUsed), Number(profile.walletBalance));
+
     const result = await db.transaction(async (tx) => {
       const [slot] = await tx
         .select()
@@ -135,15 +136,18 @@ router.post("/bookings", requireAuth, async (req, res) => {
       if (!slot) return { error: "not_found" as const };
       if (slot.status !== "available") return { error: "slot_unavailable" as const };
 
-      const totalAmount = slot.priceOverride ?? venue.pricePerHour;
+      const totalAmount = Number(slot.priceOverride ?? venue.pricePerHour);
 
-      // Mark slot as booked atomically
+      if (walletUsed > 0) {
+        const txDb = tx as unknown as typeof db;
+        await debitWallet(txDb, profile.id, walletUsed, "Wallet used for booking payment", slotId);
+      }
+
       await tx
         .update(slotsTable)
         .set({ status: "booked", updatedAt: new Date() })
         .where(and(eq(slotsTable.id, slotId), eq(slotsTable.status, "available")));
 
-      // Create payment record
       const [payment] = await tx
         .insert(paymentsTable)
         .values({
@@ -152,12 +156,11 @@ router.post("/bookings", requireAuth, async (req, res) => {
           razorpayOrderId,
           razorpayPaymentId,
           razorpaySignature,
-          amount: totalAmount,
+          amount: totalAmount.toString(),
           status: "success",
         })
         .returning();
 
-      // Create booking
       const [booking] = await tx
         .insert(bookingsTable)
         .values({
@@ -168,7 +171,7 @@ router.post("/bookings", requireAuth, async (req, res) => {
           date: slot.date,
           startTime: slot.startTime,
           endTime: slot.endTime,
-          totalAmount,
+          totalAmount: totalAmount.toString(),
           status: "confirmed",
           paymentId: payment.id,
           razorpayOrderId,
@@ -176,7 +179,6 @@ router.post("/bookings", requireAuth, async (req, res) => {
         })
         .returning();
 
-      // Update payment referenceId
       await tx
         .update(paymentsTable)
         .set({ referenceId: booking.id })
@@ -196,13 +198,21 @@ router.post("/bookings", requireAuth, async (req, res) => {
 
     const { booking, slot } = result;
 
-    // Create notification (outside transaction — non-critical)
     await db.insert(notificationsTable).values({
       userId: profile.id,
       type: "payment_success",
       title: "Booking Confirmed!",
       body: `Your booking at ${venue.name} on ${slot.date} (${slot.startTime} - ${slot.endTime}) is confirmed.`,
       referenceId: booking.id,
+    });
+
+    // Post-booking triggers (non-blocking)
+    setImmediate(async () => {
+      try {
+        await generateBookingPayout(venue.id, booking.id, Number(booking.totalAmount));
+        await processFirstBookingCashback(profile.id, booking.id);
+        await processReferralRewards(profile.id);
+      } catch {}
     });
 
     res.status(201).json(formatBooking(booking, venue));
@@ -241,7 +251,7 @@ router.get("/bookings/:bookingId", requireAuth, async (req, res) => {
 
     res.json(formatBooking(booking, venue ?? null));
   } catch (err) {
-    req.log.error({ err }, "Error fetching booking" );
+    req.log.error({ err }, "Error fetching booking");
     res.status(500).json({ error: "internal_error", message: "Failed to fetch booking" });
   }
 });
@@ -272,7 +282,6 @@ router.post("/bookings/:bookingId/cancel", requireAuth, async (req, res) => {
       return;
     }
 
-    // Free the slot
     await db
       .update(slotsTable)
       .set({ status: "available", updatedAt: new Date() })
@@ -283,6 +292,17 @@ router.post("/bookings/:bookingId/cancel", requireAuth, async (req, res) => {
       .set({ status: "cancelled", updatedAt: new Date() })
       .where(eq(bookingsTable.id, bookingId))
       .returning();
+
+    // Partial wallet refund (50% of booking amount) on cancellation
+    setImmediate(async () => {
+      try {
+        const refund = Math.floor(Number(booking.totalAmount) * 0.5);
+        if (refund > 0) {
+          const { processCancellationRefund } = await import("../lib/wallet");
+          await processCancellationRefund(profile.id, bookingId, "booking", refund);
+        }
+      } catch {}
+    });
 
     res.json(formatBooking(updated, null));
   } catch (err) {

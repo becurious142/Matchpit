@@ -7,6 +7,7 @@ import {
   uuid,
   date,
   pgEnum,
+  boolean,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -28,6 +29,7 @@ export const matchStatusEnum = pgEnum("match_status", [
   "funded",
   "cancelled",
   "expired",
+  "cancelled_underfilled",
 ]);
 
 export const matchFinancialStatusEnum = pgEnum("match_financial_status", [
@@ -64,6 +66,9 @@ export const hostedMatchesTable = pgTable("hosted_matches", {
   status: matchStatusEnum("status").notNull().default("open"),
   financialStatus: matchFinancialStatusEnum("financial_status").notNull().default("pending"),
   hostPaymentId: uuid("host_payment_id"),
+  lockDeadline: timestamp("lock_deadline"),
+  cancelledReason: text("cancelled_reason"),
+  underfillRefundIssued: boolean("underfill_refund_issued").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

@@ -1,4 +1,6 @@
+import { useQuery } from "@tanstack/react-query";
 import { useGetMyProfile, useUpdateMyProfile } from "@workspace/api-client-react";
+import { BadgeDisplay } from "@/components/BadgeDisplay";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -64,6 +66,16 @@ export default function Profile() {
     { id: "badminton",   label: "Badminton",    icon: "🏸" },
     { id: "pickleball",  label: "Pickleball",   icon: "🏓" },
   ];
+
+  const { data: badges } = useQuery<any[]>({
+    queryKey: ["profile-badges"],
+    queryFn: async () => {
+      const res = await fetch("/api/profile/badges");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!profile,
+  });
 
   if (isLoading) {
     return <div className="container max-w-2xl py-12"><Skeleton className="h-[500px] w-full" /></div>;
@@ -184,7 +196,7 @@ export default function Profile() {
                 )}
               />
 
-              <Button 
+                      <Button 
                 type="submit" 
                 className="w-full h-14 text-lg font-bold uppercase italic mt-8"
                 disabled={updateProfile.isPending}
@@ -195,6 +207,15 @@ export default function Profile() {
           </Form>
         </CardContent>
       </Card>
+
+      {badges && badges.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-2xl font-extrabold uppercase italic tracking-tighter mb-4">
+            Your <span className="text-primary">Badges</span>
+          </h2>
+          <BadgeDisplay badges={badges} />
+        </div>
+      )}
     </div>
   );
 }

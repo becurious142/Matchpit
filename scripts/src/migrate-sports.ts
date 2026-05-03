@@ -1,7 +1,7 @@
 import { db, venuesTable } from "@workspace/db";
 import { SPORTS } from "@workspace/db";
 
-const CANONICAL = new Set(SPORTS.map((s) => s.slug));
+const CANONICAL = new Set<string>(SPORTS.map((s) => s.slug));
 
 const SPORT_MAP: Record<string, string | null> = {
   tennis:     "badminton",
