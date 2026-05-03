@@ -1,0 +1,152 @@
+STOP.
+
+Before continuing, perform a full forensic repository audit on everything you have built so far.
+
+Do not give me summary assurances.
+
+I want hard verification.
+
+You must now act as a principal code reviewer, production auditor, and QA lead.
+
+====================================================
+MANDATORY SELF AUDIT CHECKLIST
+====================================================
+
+PHASE A — FILE TREE AUDIT
+List every file created so far grouped by:
+- frontend pages
+- frontend components
+- hooks
+- services
+- types
+- Supabase migrations
+- Supabase edge functions
+- utility files
+- env files
+
+Flag any missing module required by the product spec.
+
+====================================================
+
+PHASE B — IMPORT / BUILD VALIDATION
+Check all created files for:
+- broken imports
+- duplicate exports
+- missing types
+- unresolved references
+- syntax errors
+- circular dependencies
+
+Run an internal build validation mentally and list any probable compile breakers.
+
+Then fix them before proceeding.
+
+====================================================
+
+PHASE C — DATABASE CONSISTENCY AUDIT
+Audit every migration file.
+
+Verify:
+- no duplicate table creation
+- no duplicate enum creation
+- no duplicate function creation unless CREATE OR REPLACE
+- all foreign keys valid
+- all referenced tables exist before dependent migrations
+- all indexes safe
+- all RLS policies syntactically valid
+- migrations safe for supabase db push
+
+If any conflict exists, rewrite the migrations now.
+
+====================================================
+
+PHASE D — FRONTEND ↔ BACKEND CONTRACT AUDIT
+For every frontend service and hook, verify:
+
+- the Supabase table names exist
+- all queried columns exist
+- all RPC function names exist
+- all edge function names match exactly
+- all payload response types align
+
+List mismatches and fix immediately.
+
+====================================================
+
+PHASE E — PAYMENT COMMERCE AUDIT
+Verify every payment flow end to end:
+
+private booking:
+Razorpay order → payment popup → signature verify → DB atomic booking
+
+hosted host fee:
+Razorpay order → payment popup → signature verify → hosted match insert
+
+reserve join fee:
+Razorpay order → payment popup → signature verify → participant insert
+
+final payment:
+Razorpay order → payment popup → signature verify → financial settlement
+
+Check:
+- no free entry bypass
+- no duplicate callback vulnerability
+- transaction rows inserted
+- service role usage correct
+
+Fix anything weak.
+
+====================================================
+
+PHASE F — STATE INVALIDATION AUDIT
+Check all Tanstack Query hooks:
+
+after successful payment or mutations,
+verify exact invalidations are present for:
+- venues
+- slots
+- bookings
+- matches list
+- match detail
+- dashboards
+- wallet
+
+Add missing invalidations.
+
+====================================================
+
+PHASE G — ENV + DEPLOYMENT AUDIT
+Verify:
+- all required env vars documented
+- no missing secrets
+- all edge functions deployable
+- exact supabase deploy commands listed
+- exact vercel deploy readiness listed
+
+====================================================
+
+PHASE H — QA FAILURE TEST AUDIT
+Generate a table of:
+
+- possible payment failures
+- auth failures
+- stale pending rows
+- race conditions
+- cron failures
+- duplicate joins
+- abandoned checkout flows
+
+Then state whether the current code handles each scenario or not.
+
+If not handled, implement the missing logic.
+
+====================================================
+
+CRITICAL RULE
+====================================================
+
+Do NOT continue feature development until this forensic audit is complete and repository is hardened.
+
+Show exact fixes performed, exact files modified, and exact remaining risks.
+
+Then continue building the next unfinished product phase.

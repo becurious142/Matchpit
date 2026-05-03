@@ -1,0 +1,318 @@
+You are no longer acting as a simple coding assistant.
+
+You are now acting as a senior startup CTO, principal full-stack engineer, product architect, DevOps engineer, QA automation lead, and payments security engineer.
+
+Your task is to build a complete production-grade web application called MATCHPIT.
+
+MATCHPIT is a premium sports turf booking + hosted social match marketplace for India, starting with Jaipur.
+
+The final product must be deployable, scalable, commerce-enabled, mobile responsive, and coded with production discipline.
+
+You are NOT allowed to generate mock/demo/toy code.
+You are NOT allowed to skip backend logic.
+You are NOT allowed to leave placeholder payment flows.
+You are NOT allowed to create superficial frontend-only pages.
+You must create a fully functioning app with real database schema, backend APIs, auth flows, transaction handling, and deployment instructions.
+
+====================================================
+PRODUCT OVERVIEW
+====================================================
+
+MATCHPIT has TWO core verticals:
+
+1. PRIVATE TURF BOOKING
+Users can browse sports venues, see slots, pay online, and book turfs.
+
+2. HOSTED SOCIAL MATCHES
+Any player can host a public match at a venue by paying a small host commitment fee.
+Other players reserve spots by paying reserve fee.
+When minimum players join, all reserved players pay remaining final amount.
+System confirms match and venue gets paid.
+
+This is NOT a simple listing site.
+This is a sports commerce transaction platform.
+
+====================================================
+MANDATORY TECH STACK
+====================================================
+
+Frontend:
+- React + TypeScript + Vite
+- Tailwind CSS
+- Shadcn UI premium components
+- Lucide icons
+- Framer motion animations
+- Mobile-first responsive design
+
+Backend:
+- Supabase PostgreSQL
+- Supabase Auth
+- Supabase Edge Functions (Deno/TypeScript)
+- Row Level Security enabled
+
+Payments:
+- Razorpay full production integration
+- order creation
+- signature verification
+- transaction audit logs
+
+Hosting:
+- Vercel frontend deploy ready
+- Supabase backend linked
+
+State/Data:
+- Tanstack React Query
+- strict query invalidation architecture
+
+====================================================
+DESIGN LANGUAGE
+====================================================
+
+The app should feel:
+premium, sporty, startup-grade, modern, Gen-Z attractive.
+
+Use:
+dark + white clean cards,
+rounded corners,
+glassmorphism headers,
+hero banners,
+venue image cards,
+sticky CTA bars,
+smooth skeleton loading.
+
+Must look like a funded startup product, not student project.
+
+====================================================
+FULL FEATURE MODULES TO BUILD
+====================================================
+
+PHASE 1 — AUTHENTICATION SYSTEM
+Build:
+- email signup/login
+- google oauth login
+- phone otp login
+- profile onboarding
+- favorite sport selection
+- city selection
+- profile dashboard
+
+Supabase auth triggers must auto-create profile rows.
+
+No email confirmation blocker in dev mode.
+
+====================================================
+
+PHASE 2 — DATABASE MASTER SCHEMA
+Create full Supabase SQL migrations for:
+
+profiles
+venues
+slots
+bookings
+payments
+hosted_matches
+hosted_match_participants
+hosted_match_transactions
+wallet_ledger
+owner_leads
+notifications
+badges
+rewards_history
+
+Use enums, indexes, RLS, triggers, timestamps, helper functions.
+
+All migrations must be idempotent and safe on supabase db push.
+
+====================================================
+
+PHASE 3 — PRIVATE TURF BOOKING COMMERCE
+Build complete private booking flow:
+
+browse venues
+venue detail page
+14-day slot calendar
+live slot fetching
+select slot
+create Razorpay order
+pay online
+verify payment
+atomic booking confirmation
+booking success page
+my bookings dashboard
+
+Need:
+Supabase RPC atomic_hold_slot_for_booking
+Supabase RPC atomic_confirm_booking_payment
+expired hold cleanup function
+
+No offline payment.
+No fake confirmation.
+
+====================================================
+
+PHASE 4 — HOSTED MATCH COMMERCE ENGINE
+Build MATCHPIT's flagship hosted match model.
+
+HOST FLOW:
+- choose sport
+- choose venue
+- choose date
+- choose slot
+- choose total players
+- choose skill level
+- add notes
+- system computes commerce math
+- host pays ₹99 commitment fee
+- hosted match gets created only after successful Razorpay payment
+
+PLAYER FLOW:
+- browse hosted matches feed
+- premium cards with venue image, reserve fee, final fee, joined count, urgency chips
+- open match detail lobby
+- reserve spot by paying reserve fee
+- participant inserted only after payment verification
+
+CONFIRMATION ENGINE:
+- when minimum required players reached, match enters confirmed state
+- all reserved users receive final payment CTA
+- final amount payable dynamically computed
+- after all final payments, match financial status becomes funded
+
+Need:
+all SQL RPCs
+all edge functions
+all transaction tables
+cron scheduler or server job for match confirmations
+dynamic underfill financial math
+
+No free joins allowed.
+
+====================================================
+
+PHASE 5 — WALLET + REWARD FOUNDATION
+Build:
+- wallet balance engine
+- cashback ledger
+- referral reward hooks
+- host trust score
+- player badges
+- streak counters
+
+Do not just create UI.
+Create DB schema foundation + service architecture.
+
+====================================================
+
+PHASE 6 — OWNER LEAD CAPTURE SYSTEM
+Venue owners can:
+- submit their venue
+- request onboarding
+- become partner owner
+
+Create owner lead forms and Supabase table.
+
+====================================================
+
+PHASE 7 — USER DASHBOARDS
+Player dashboard:
+- my bookings
+- my hosted matches
+- matches joined
+- wallet
+- badges
+- payment history
+
+Host dashboard:
+- hosted match financial summary
+- player joins
+- pending final payments
+
+====================================================
+
+PHASE 8 — ADMIN PANEL
+Build internal admin pages:
+- users table
+- venue approvals
+- bookings monitor
+- hosted match monitor
+- payment ledger
+- owner leads
+- manual override tools
+
+====================================================
+
+PHASE 9 — NOTIFICATION SYSTEM
+Architecture for:
+- payment success
+- match joined
+- match confirmed
+- final payment pending
+- booking reminders
+
+Supabase table + trigger-based notification inserts.
+
+====================================================
+
+PHASE 10 — QA + TESTING
+You must generate:
+- all manual QA scripts
+- test user credentials
+- payment test checklist
+- SQL verification queries
+- race condition checks
+- failure scenario tests
+
+Do not say “app built” until all QA scenarios are documented.
+
+====================================================
+CRITICAL ENGINEERING RULES
+====================================================
+
+1. Never generate mock data.
+2. Never use placeholder TODO comments.
+3. Never skip backend implementation.
+4. Every payment must have Razorpay order + verification.
+5. Every transaction must have audit table entry.
+6. Every user action must update Supabase correctly.
+7. Use service layer architecture, hooks architecture, type-safe interfaces.
+8. All environment variables must be documented.
+9. All Supabase Edge Functions must include CORS and auth validation.
+10. Generate exact deployment commands.
+
+====================================================
+DELIVERY EXECUTION MODE
+====================================================
+
+You must execute the build in iterative phases.
+
+For each phase:
+- create files
+- show exact filenames
+- write full code
+- run internal lint/build checks
+- self-audit for missing imports/errors
+- continue automatically to next phase
+
+Do NOT stop after giving a plan.
+Do NOT ask me if you should continue.
+Continue building until all 10 phases are completed.
+
+Whenever code becomes too large, continue in next message preserving full repository state.
+
+====================================================
+FINAL COMPLETION CONDITION
+====================================================
+
+Only finish when you have delivered:
+
+- full file tree
+- all source code
+- all SQL migrations
+- all edge functions
+- all env variables
+- all deployment commands
+- all QA scripts
+- all testing instructions
+- production go-live checklist
+
+Now begin PHASE 1 immediately.
