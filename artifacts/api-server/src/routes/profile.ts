@@ -1,8 +1,8 @@
 import { Router, type IRouter } from "express";
 import { getAuth } from "@clerk/express";
 import { db } from "@workspace/db";
-import { profilesTable, userStatsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { profilesTable, userStatsTable, playerFollowsTable } from "@workspace/db";
+import { eq, and, count } from "drizzle-orm";
 import { requireAuth, getOrCreateProfile, getProfileByClerkId } from "../lib/auth";
 import { processSignupBonus } from "../lib/wallet";
 import { attributeReferral } from "../lib/referral";
@@ -204,6 +204,74 @@ router.get("/profile/stats", requireAuth, async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Error fetching player stats");
     res.status(500).json({ error: "internal_error", message: "Failed to fetch stats" });
+  }
+});
+
+// ─── Follow / Unfollow ───────────────────────────────────────────────────────
+router.post("/profile/:id/follow", requireAuth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const profile = await getProfileByClerkId(userId!);
+    if (!profile) { res.status(404).json({ error: "not_found" }); return; }
+
+    const followingId = req.params.id as string;
+    if (followingId === profile.id) {
+      res.status(400).json({ error: "self_follow", message: "Cannot follow yourself" });
+      return;
+    }
+
+    const [target] = await db.select({ id: profilesTable.id })
+      .from(profilesTable).where(eq(profilesTable.id, followingId)).limit(1);
+    if (!target) { res.status(404).json({ error: "not_found", message: "Player not found" }); return; }
+
+    const [existing] = await db.select({ id: playerFollowsTable.id })
+      .from(playerFollowsTable)
+      .where(and(eq(playerFollowsTable.followerUserId, profile.id), eq(playerFollowsTable.followingUserId, followingId)))
+      .limit(1);
+
+    if (existing) { res.json({ followed: true, alreadyFollowing: true }); return; }
+
+    await db.insert(playerFollowsTable).values({ followerUserId: profile.id, followingUserId: followingId });
+    res.json({ followed: true });
+  } catch (err) {
+    req.log.error({ err }, "Error following player");
+    res.status(500).json({ error: "internal_error" });
+  }
+});
+
+router.post("/profile/:id/unfollow", requireAuth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const profile = await getProfileByClerkId(userId!);
+    if (!profile) { res.status(404).json({ error: "not_found" }); return; }
+
+    const followingId = req.params.id as string;
+    await db.delete(playerFollowsTable)
+      .where(and(eq(playerFollowsTable.followerUserId, profile.id), eq(playerFollowsTable.followingUserId, followingId)));
+
+    res.json({ unfollowed: true });
+  } catch (err) {
+    req.log.error({ err }, "Error unfollowing player");
+    res.status(500).json({ error: "internal_error" });
+  }
+});
+
+router.get("/profile/:id/network", async (req, res) => {
+  try {
+    const targetId = req.params.id as string;
+
+    const [followers] = await db.select({ c: count() }).from(playerFollowsTable)
+      .where(eq(playerFollowsTable.followingUserId, targetId));
+    const [following] = await db.select({ c: count() }).from(playerFollowsTable)
+      .where(eq(playerFollowsTable.followerUserId, targetId));
+
+    res.json({
+      followersCount: Number(followers.c),
+      followingCount: Number(following.c),
+    });
+  } catch (err) {
+    req.log.error({ err }, "Error fetching network");
+    res.status(500).json({ error: "internal_error" });
   }
 });
 

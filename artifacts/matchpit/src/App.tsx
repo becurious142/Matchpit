@@ -25,6 +25,9 @@ import Admin from "@/pages/admin";
 import ListVenue from "@/pages/list-venue";
 import OwnerDashboard from "@/pages/owner-dashboard";
 import NotificationsPage from "@/pages/notifications";
+import CommunityPage from "@/pages/community";
+import SquadsPage from "@/pages/squads";
+import SquadDetailPage from "@/pages/squad-detail";
 import NotFound from "@/pages/not-found";
 
 const clerkPubKey = publishableKeyFromHost(
@@ -90,6 +93,9 @@ function Router() {
         <Route path="/dashboard/notifications" component={() => <ProtectedRoute component={NotificationsPage} />} />
         <Route path="/admin" component={() => <ProtectedRoute component={Admin} />} />
         <Route path="/owner" component={() => <ProtectedRoute component={OwnerDashboard} />} />
+        <Route path="/community" component={CommunityPage} />
+        <Route path="/squads" component={SquadsPage} />
+        <Route path="/squads/:id" component={SquadDetailPage} />
         <Route path="/list-venue" component={ListVenue} />
 
         <Route path="/sign-in/*?">

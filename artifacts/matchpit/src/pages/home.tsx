@@ -1,12 +1,15 @@
 import { Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useListFeaturedVenues, useListHostedMatches, useListSports } from "@workspace/api-client-react";
-import { MapPin, Users, Calendar, Clock, Trophy, Star, Zap, ShieldCheck, Wallet, ChevronRight } from "lucide-react";
+import { MapPin, Users, Calendar, Clock, Trophy, Star, Zap, ShieldCheck, Wallet, ChevronRight, MessageSquare, Shield } from "lucide-react";
 import { motion } from "framer-motion";
 import { useUser } from "@clerk/react";
+import { formatDistanceToNow, parseISO } from "date-fns";
 
 const SPORTS_COLORS: Record<string, string> = {
   cricket: "from-green-600 to-green-400",
@@ -16,18 +19,55 @@ const SPORTS_COLORS: Record<string, string> = {
   pickleball: "from-pink-600 to-pink-400",
 };
 
-const TRUST_STATS = [
-  { value: "500+", label: "Players Active", icon: <Users className="w-6 h-6" /> },
-  { value: "15+", label: "Premium Venues", icon: <Star className="w-6 h-6" /> },
-  { value: "₹0", label: "Hidden Charges", icon: <ShieldCheck className="w-6 h-6" /> },
-  { value: "24hr", label: "Support Response", icon: <Zap className="w-6 h-6" /> },
-];
+const POST_TYPE_ICONS: Record<string, string> = {
+  text: "💬", image: "🖼️", looking_players: "🔍",
+  match_result: "🏆", challenge: "⚡", venue_review: "📍", achievement: "🎖️",
+};
 
 export default function Home() {
   const { isSignedIn } = useUser();
   const { data: featuredVenues, isLoading: loadingVenues } = useListFeaturedVenues();
   const { data: sportsData, isLoading: loadingSports } = useListSports();
   const { data: matchesData, isLoading: loadingMatches } = useListHostedMatches({ status: "open" });
+
+  const { data: liveStats } = useQuery<{
+    venues: number; matchesHosted: number; playersJoined: number; walletRewardsDistributed: number;
+  }>({
+    queryKey: ["community-stats"],
+    queryFn: async () => {
+      const res = await fetch("/api/community/stats");
+      if (!res.ok) throw new Error("stats failed");
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+
+  const { data: communityData } = useQuery<{ posts: any[] }>({
+    queryKey: ["community-feed-preview"],
+    queryFn: async () => {
+      const res = await fetch("/api/community/feed?limit=4");
+      if (!res.ok) return { posts: [] };
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+
+  const { data: squadsPreview } = useQuery<any[]>({
+    queryKey: ["squads-preview"],
+    queryFn: async () => {
+      const res = await fetch("/api/squads");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+
+  const trustStats = [
+    { value: liveStats ? `${liveStats.playersJoined}+` : "500+", label: "Players Active", icon: <Users className="w-6 h-6" /> },
+    { value: liveStats ? `${liveStats.venues}+` : "15+", label: "Premium Venues", icon: <Star className="w-6 h-6" /> },
+    { value: liveStats ? `${liveStats.matchesHosted}+` : "50+", label: "Matches Hosted", icon: <Trophy className="w-6 h-6" /> },
+    { value: liveStats ? `₹${Math.round(liveStats.walletRewardsDistributed)}` : "₹0", label: "Rewards Distributed", icon: <Wallet className="w-6 h-6" /> },
+  ];
 
   return (
     <div className="flex flex-col min-h-screen w-full">
@@ -73,11 +113,11 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Trust Proof Counters */}
+      {/* Live Jaipur Counters */}
       <section className="border-y border-border/40 bg-card/20 backdrop-blur-sm py-6">
         <div className="container mx-auto px-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            {TRUST_STATS.map((stat, i) => (
+            {trustStats.map((stat, i) => (
               <motion.div
                 key={stat.label}
                 initial={{ opacity: 0, y: 10 }}
@@ -341,6 +381,95 @@ export default function Home() {
             )}
           </div>
         </section>
+
+
+        {/* Community Feed Preview */}
+        {(communityData?.posts?.length ?? 0) > 0 && (
+          <section>
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-3xl font-bold uppercase italic tracking-tight">Sports <span className="text-primary">Adda</span></h2>
+                <p className="text-sm text-muted-foreground">What Jaipur players are saying</p>
+              </div>
+              <Link href="/community" className="flex items-center gap-1 text-sm font-medium text-primary hover:underline uppercase tracking-widest">
+                Full Feed <ChevronRight className="w-4 h-4" />
+              </Link>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {communityData?.posts.slice(0, 4).map((post: any) => (
+                <Card key={post.id} className="bg-card border-border/60 hover:border-primary/40 transition-colors">
+                  <CardContent className="p-4">
+                    <div className="flex items-start gap-3">
+                      <Avatar className="w-9 h-9 shrink-0">
+                        <AvatarImage src={post.authorAvatar ?? undefined} />
+                        <AvatarFallback className="bg-primary/20 text-primary text-sm font-bold">{post.authorName[0]}</AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-bold">{post.authorName}</span>
+                          {post.sport && <Badge variant="secondary" className="text-[9px] h-4 uppercase">{post.sport.replace("_", " ")}</Badge>}
+                        </div>
+                        <p className="text-xs text-muted-foreground line-clamp-2">{post.caption}</p>
+                        <div className="flex items-center gap-3 mt-2 text-[10px] text-muted-foreground">
+                          <span>{POST_TYPE_ICONS[post.type]} {post.type.replace("_", " ")}</span>
+                          <span>❤️ {post.likesCount}</span>
+                          <span>💬 {post.commentsCount}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            <div className="text-center mt-4">
+              <Link href="/community">
+                <Button variant="outline" className="font-bold uppercase italic border-primary/30 text-primary hover:bg-primary/5 gap-2">
+                  <MessageSquare className="w-4 h-4" /> Join the Conversation
+                </Button>
+              </Link>
+            </div>
+          </section>
+        )}
+
+        {/* Squads Preview */}
+        {(squadsPreview?.length ?? 0) > 0 && (
+          <section>
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-3xl font-bold uppercase italic tracking-tight">Jaipur <span className="text-primary">Squads</span></h2>
+                <p className="text-sm text-muted-foreground">Find your team. Play together.</p>
+              </div>
+              <Link href="/squads" className="flex items-center gap-1 text-sm font-medium text-primary hover:underline uppercase tracking-widest">
+                All Squads <ChevronRight className="w-4 h-4" />
+              </Link>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+              {squadsPreview?.slice(0, 3).map((squad: any) => (
+                <Link key={squad.id} href={`/squads/${squad.id}`}>
+                  <Card className="bg-card border-border/60 hover:border-primary/40 transition-colors cursor-pointer group">
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="w-11 h-11 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-xl font-bold text-primary shrink-0">
+                          {squad.logoUrl ? <img src={squad.logoUrl} alt="" className="w-full h-full object-cover rounded-xl" /> : squad.name[0]}
+                        </div>
+                        <div>
+                          <p className="font-bold text-sm">{squad.name}</p>
+                          <Badge variant="secondary" className="text-[9px] uppercase font-bold mt-0.5">{squad.sport.replace("_", " ")}</Badge>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {squad.memberCount} members</span>
+                        <span className="flex items-center gap-1"><Trophy className="w-3 h-3 text-yellow-400" /> {squad.wins}W / {squad.losses}L</span>
+                        <span className="text-primary font-bold group-hover:underline">View →</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+
       </div>
 
       {/* Owner CTA Strip */}

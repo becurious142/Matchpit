@@ -1,6 +1,6 @@
 import { useParams, useLocation } from "wouter";
-import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState, useRef, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useGetHostedMatch, useJoinHostedMatch, useCreatePaymentOrder, useVerifyPayment, useGetMyProfile } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,8 +9,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
-import { Calendar, Clock, MapPin, Trophy, Users, ShieldCheck, UserPlus, Share2, Bell, RefreshCw, XCircle, IndianRupee } from "lucide-react";
-import { format, parseISO } from "date-fns";
+import { Calendar, Clock, MapPin, Trophy, Users, ShieldCheck, UserPlus, Share2, Bell, RefreshCw, XCircle, IndianRupee, MessageCircle, Send } from "lucide-react";
+import { format, parseISO, formatDistanceToNow } from "date-fns";
 import { loadRazorpay } from "@/lib/razorpay";
 import { useUser } from "@clerk/react";
 import { ShareModal } from "@/components/ShareModal";
@@ -35,6 +35,9 @@ export default function MatchDetail() {
   const [nudging, setNudging] = useState(false);
   const [rehosting, setRehosting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [activeTab, setActiveTab] = useState<"info" | "chat">("info");
+  const [chatMessage, setChatMessage] = useState("");
+  const chatBottomRef = useRef<HTMLDivElement>(null);
 
   const { data: matchDetail, isLoading, refetch } = useGetHostedMatch(id!);
   const { data: profile } = useGetMyProfile();
@@ -47,6 +50,24 @@ export default function MatchDetail() {
     queryFn: () => matchFetch(`/hosted-matches/${id}/finance`),
     enabled: !!matchDetail && !!profile && profile.id === matchDetail.hostUserId,
     retry: false,
+  });
+
+  const { data: chatMessages, refetch: refetchChat } = useQuery<any[]>({
+    queryKey: ["match-chat", id],
+    queryFn: () => matchFetch(`/hosted-matches/${id}/chat`),
+    enabled: activeTab === "chat",
+    refetchInterval: activeTab === "chat" ? 8000 : false,
+  });
+
+  const sendMessage = useMutation({
+    mutationFn: (message: string) =>
+      matchFetch(`/hosted-matches/${id}/chat`, { method: "POST", body: JSON.stringify({ message }) }),
+    onSuccess: () => {
+      setChatMessage("");
+      refetchChat();
+      setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+    },
+    onError: (err: any) => toast({ title: err.message || "Failed to send", variant: "destructive" }),
   });
 
   const isHost = !!profile && !!matchDetail && profile.id === matchDetail.hostUserId;
@@ -204,6 +225,102 @@ export default function MatchDetail() {
 
           {/* Main Info */}
           <div className="lg:col-span-2 space-y-6">
+
+            {/* Tab Switcher */}
+            <div className="flex gap-1 bg-muted rounded-xl p-1">
+              <button
+                onClick={() => setActiveTab("info")}
+                className={`flex-1 py-2 rounded-lg text-sm font-bold uppercase tracking-wider transition-colors ${
+                  activeTab === "info" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Match Info
+              </button>
+              <button
+                onClick={() => setActiveTab("chat")}
+                className={`flex-1 py-2 rounded-lg text-sm font-bold uppercase tracking-wider transition-colors flex items-center justify-center gap-2 ${
+                  activeTab === "chat" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <MessageCircle className="w-4 h-4" /> Discussion
+              </button>
+            </div>
+
+            {/* Chat Tab */}
+            {activeTab === "chat" && (
+              <Card className="bg-card border-border/50">
+                <CardContent className="p-0 flex flex-col" style={{ height: "480px" }}>
+                  <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    {!chatMessages?.length ? (
+                      <div className="flex flex-col items-center justify-center h-full text-center">
+                        <MessageCircle className="w-12 h-12 text-muted-foreground opacity-30 mb-3" />
+                        <p className="font-bold text-muted-foreground">No messages yet</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {matchDetail.isUserJoined || isHost
+                            ? "Be the first to say something!"
+                            : "Join the match to participate in the chat."}
+                        </p>
+                      </div>
+                    ) : (
+                      chatMessages.map((msg: any) => {
+                        const isMe = msg.userId === profile?.id;
+                        return (
+                          <div key={msg.id} className={`flex gap-2 ${isMe ? "flex-row-reverse" : ""}`}>
+                            <Avatar className="w-8 h-8 shrink-0">
+                              <AvatarImage src={msg.authorAvatar ?? undefined} />
+                              <AvatarFallback className="text-xs bg-muted">{msg.authorName[0]}</AvatarFallback>
+                            </Avatar>
+                            <div className={`max-w-[75%] ${isMe ? "items-end" : "items-start"} flex flex-col`}>
+                              {!isMe && <span className="text-[10px] text-muted-foreground font-bold mb-0.5 ml-1">{msg.authorName}</span>}
+                              <div className={`rounded-2xl px-3 py-2 text-sm ${isMe ? "bg-primary text-black rounded-tr-sm" : "bg-muted rounded-tl-sm"}`}>
+                                {msg.message}
+                              </div>
+                              <span className="text-[9px] text-muted-foreground mt-0.5 mx-1">
+                                {formatDistanceToNow(parseISO(msg.createdAt), { addSuffix: true })}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                    <div ref={chatBottomRef} />
+                  </div>
+
+                  {(matchDetail.isUserJoined || isHost) ? (
+                    <div className="border-t border-border/50 p-3 flex gap-2">
+                      <input
+                        value={chatMessage}
+                        onChange={(e) => setChatMessage(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey && chatMessage.trim()) {
+                            e.preventDefault();
+                            sendMessage.mutate(chatMessage.trim());
+                          }
+                        }}
+                        placeholder="Type a message..."
+                        className="flex-1 bg-muted rounded-full px-4 py-2 text-sm outline-none focus:ring-1 focus:ring-primary/50 border border-border/40"
+                      />
+                      <Button
+                        size="icon"
+                        className="rounded-full shrink-0"
+                        disabled={!chatMessage.trim() || sendMessage.isPending}
+                        onClick={() => chatMessage.trim() && sendMessage.mutate(chatMessage.trim())}
+                      >
+                        <Send className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="border-t border-border/50 p-3 text-center text-xs text-muted-foreground">
+                      Join this match to participate in the discussion.
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Info Tab */}
+            {activeTab === "info" && (
+            <>
             <Card className="bg-card/80 backdrop-blur-md border-border/50 shadow-xl">
               <CardContent className="p-6 md:p-8">
                 <h1 className="text-3xl md:text-4xl font-extrabold uppercase italic tracking-tight mb-2">
@@ -364,6 +481,8 @@ export default function MatchDetail() {
                   </div>
                 </CardContent>
               </Card>
+            )}
+            </>
             )}
           </div>
 

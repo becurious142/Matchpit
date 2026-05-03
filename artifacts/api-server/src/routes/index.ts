@@ -14,6 +14,9 @@ import adminExtendedRouter from "./admin-extended";
 import citiesRouter from "./cities";
 import couponsRouter from "./coupons";
 import ownerRouter from "./owner";
+import communityRouter from "./community";
+import squadsRouter from "./squads";
+import matchChatRouter from "./match-chat";
 
 const router: IRouter = Router();
 
@@ -24,6 +27,7 @@ router.use(couponsRouter);
 router.use(venuesRouter);
 router.use(bookingsRouter);
 router.use(hostedMatchesRouter);
+router.use(matchChatRouter);
 router.use(paymentsRouter);
 router.use(walletRouter);
 router.use(dashboardRouter);
@@ -32,5 +36,7 @@ router.use(ownerLeadsRouter);
 router.use(ownerRouter);
 router.use(adminRouter);
 router.use(adminExtendedRouter);
+router.use(communityRouter);
+router.use(squadsRouter);
 
 export default router;

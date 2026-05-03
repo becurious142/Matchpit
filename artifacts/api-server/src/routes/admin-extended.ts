@@ -971,5 +971,102 @@ router.get("/admin/live-matches", requireAuth, async (req, res) => {
   }
 });
 
+// ─── Tester Invite Tools ─────────────────────────────────────────────────────
+router.post("/admin/testers/add", requireAuth, async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  try {
+    const { phone, name, notes } = req.body;
+    if (!phone?.trim() || !name?.trim()) {
+      res.status(400).json({ error: "validation", message: "phone and name required" });
+      return;
+    }
+    const { testInvitesTable } = await import("@workspace/db");
+    const inviteCode = `MP${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const [invite] = await db.insert(testInvitesTable).values({
+      phone: phone.trim(),
+      name: name.trim(),
+      inviteCode,
+      notes: notes?.trim() ?? null,
+    }).returning();
+    res.status(201).json(invite);
+  } catch (err) {
+    req.log.error({ err }, "Error adding tester invite");
+    res.status(500).json({ error: "internal_error" });
+  }
+});
+
+router.get("/admin/testers", requireAuth, async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  try {
+    const { testInvitesTable } = await import("@workspace/db");
+    const invites = await db.select().from(testInvitesTable)
+      .orderBy(desc(testInvitesTable.createdAt)).limit(200);
+    res.json(invites);
+  } catch (err) {
+    req.log.error({ err }, "Error fetching testers");
+    res.status(500).json({ error: "internal_error" });
+  }
+});
+
+router.patch("/admin/testers/:id/status", requireAuth, async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  try {
+    const inviteId = req.params.id as string;
+    const { status } = req.body;
+    if (!["sent", "used", "expired"].includes(status)) {
+      res.status(400).json({ error: "validation", message: "invalid status" });
+      return;
+    }
+    const { testInvitesTable } = await import("@workspace/db");
+    const [updated] = await db.update(testInvitesTable)
+      .set({ status: status as any })
+      .where(eq(testInvitesTable.id, inviteId))
+      .returning();
+    if (!updated) { res.status(404).json({ error: "not_found" }); return; }
+    res.json(updated);
+  } catch (err) {
+    req.log.error({ err }, "Error updating tester status");
+    res.status(500).json({ error: "internal_error" });
+  }
+});
+
+// ─── Community Seed (admin only) ─────────────────────────────────────────────
+router.post("/admin/seed/community", requireAuth, async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  try {
+    const { communityPostsTable, citiesTable } = await import("@workspace/db");
+    const { eq: eqLocal } = await import("drizzle-orm");
+    const [city] = await db.select({ id: citiesTable.id })
+      .from(citiesTable).where(eqLocal(citiesTable.isActive, true)).limit(1);
+
+    const seedPosts = [
+      { type: "looking_players" as const, caption: "Looking for 2 more players for a Sunday football match at SMS Stadium arena! DM to join 🔥", sport: "football" },
+      { type: "match_result" as const, caption: "Amazing box cricket session yesterday at Jaipur Sports Complex. Team A won by 15 runs — gg everyone! 🏏", sport: "box_cricket" },
+      { type: "achievement" as const, caption: "Just hit 10 matches played on MATCHPIT! Jaipur's pitch is calling every weekend 💪", sport: null },
+      { type: "venue_review" as const, caption: "Reviewed Pink City Turf — floodlights are excellent, turf is well-maintained. 5 stars for the facilities 📍", sport: "football" },
+      { type: "challenge" as const, caption: "Calling out all football squads in Jaipur — we're the Panthers and we want a 7v7 challenge this Saturday! ⚡", sport: "football" },
+    ];
+
+    for (const p of seedPosts) {
+      await db.insert(communityPostsTable).values({
+        userId: admin.id,
+        cityId: city?.id ?? null,
+        type: p.type,
+        caption: p.caption,
+        sport: p.sport,
+      });
+    }
+
+    res.json({ seeded: seedPosts.length });
+  } catch (err) {
+    req.log.error({ err }, "Error seeding community");
+    res.status(500).json({ error: "internal_error" });
+  }
+});
+
 export default router;
 

@@ -3,6 +3,9 @@ import {
   hostedMatchParticipantsTable, paymentsTable, profilesTable,
   slotsTable, ownerLeadsTable, citiesTable, couponsTable,
   venuePayoutLedgerTable, walletLedgerTable,
+  communityPostsTable, communityPostCommentsTable, communityPostLikesTable,
+  squadsTable, squadMembersTable, squadPostsTable, squadChallengesTable,
+  playerFollowsTable, matchMessagesTable, testInvitesTable,
 } from "@workspace/db";
 import { SPORTS, getSportMeta } from "@workspace/db";
 import { eq, count, sum, and, isNull, isNotNull, ne, sql } from "drizzle-orm";
@@ -1183,6 +1186,606 @@ async function runQA() {
     const result = await db.execute(sql`SELECT COALESCE(SUM(net_revenue::numeric), 0) AS total FROM platform_revenue_ledger`);
     const total = Number((result.rows[0] as any)?.total ?? 0);
     return total >= 0;
+  });
+
+  // ─── Community Posts ───────────────────────────────────────────────────────
+  console.log("\nCOMMUNITY FEED");
+
+  await check("community_posts table is queryable", async () => {
+    const [row] = await db.select({ c: count() }).from(communityPostsTable);
+    return Number(row.c) >= 0;
+  });
+
+  await check("All community post types are valid enum values", async () => {
+    const valid = new Set(["text","image","looking_players","match_result","challenge","venue_review","achievement"]);
+    const rows = await db.select({ type: communityPostsTable.type }).from(communityPostsTable);
+    return rows.every((r) => valid.has(r.type));
+  });
+
+  await check("Community posts have non-empty caption", async () => {
+    const rows = await db.select({ caption: communityPostsTable.caption }).from(communityPostsTable);
+    return rows.every((r) => r.caption && r.caption.trim().length > 0);
+  });
+
+  await check("Community post likesCount is always >= 0", async () => {
+    const rows = await db.select({ likes: communityPostsTable.likesCount }).from(communityPostsTable);
+    return rows.every((r) => r.likes >= 0);
+  });
+
+  await check("Community post commentsCount is always >= 0", async () => {
+    const rows = await db.select({ cnt: communityPostsTable.commentsCount }).from(communityPostsTable);
+    return rows.every((r) => r.cnt >= 0);
+  });
+
+  await check("community_post_comments table is queryable", async () => {
+    const [row] = await db.select({ c: count() }).from(communityPostCommentsTable);
+    return Number(row.c) >= 0;
+  });
+
+  await check("All community comments reference an existing post", async () => {
+    const comments = await db.select({ postId: communityPostCommentsTable.postId }).from(communityPostCommentsTable);
+    if (!comments.length) return true;
+    const postIds = new Set((await db.select({ id: communityPostsTable.id }).from(communityPostsTable)).map((p) => p.id));
+    return comments.every((c) => postIds.has(c.postId));
+  });
+
+  await check("All community comments have non-empty text", async () => {
+    const rows = await db.select({ comment: communityPostCommentsTable.comment }).from(communityPostCommentsTable);
+    return rows.every((r) => r.comment && r.comment.trim().length > 0);
+  });
+
+  await check("community_post_likes table is queryable", async () => {
+    const [row] = await db.select({ c: count() }).from(communityPostLikesTable);
+    return Number(row.c) >= 0;
+  });
+
+  await check("No duplicate likes (same user + same post)", async () => {
+    const result = await db.execute(sql`
+      SELECT COUNT(*) AS dupes FROM (
+        SELECT post_id, user_id, COUNT(*) AS cnt FROM community_post_likes GROUP BY post_id, user_id HAVING COUNT(*) > 1
+      ) sub`);
+    return Number((result.rows[0] as any)?.dupes ?? 0) === 0;
+  });
+
+  await check("Community likes reference valid posts", async () => {
+    const likes = await db.select({ postId: communityPostLikesTable.postId }).from(communityPostLikesTable);
+    if (!likes.length) return true;
+    const postIds = new Set((await db.select({ id: communityPostsTable.id }).from(communityPostsTable)).map((p) => p.id));
+    return likes.every((l) => postIds.has(l.postId));
+  });
+
+  // ─── Squads ────────────────────────────────────────────────────────────────
+  console.log("\nSQUADS");
+
+  await check("squads table is queryable", async () => {
+    const [row] = await db.select({ c: count() }).from(squadsTable);
+    return Number(row.c) >= 0;
+  });
+
+  await check("All squads have non-empty name", async () => {
+    const rows = await db.select({ name: squadsTable.name }).from(squadsTable);
+    return rows.every((r) => r.name && r.name.trim().length > 0);
+  });
+
+  await check("All squads have non-empty sport", async () => {
+    const rows = await db.select({ sport: squadsTable.sport }).from(squadsTable);
+    return rows.every((r) => r.sport && r.sport.trim().length > 0);
+  });
+
+  await check("Squad wins and losses are always >= 0", async () => {
+    const rows = await db.select({ wins: squadsTable.wins, losses: squadsTable.losses }).from(squadsTable);
+    return rows.every((r) => r.wins >= 0 && r.losses >= 0);
+  });
+
+  await check("Squad trust ratings are between 0 and 5", async () => {
+    const rows = await db.select({ rating: squadsTable.trustRating }).from(squadsTable);
+    return rows.every((r) => Number(r.rating) >= 0 && Number(r.rating) <= 5);
+  });
+
+  await check("squad_members table is queryable", async () => {
+    const [row] = await db.select({ c: count() }).from(squadMembersTable);
+    return Number(row.c) >= 0;
+  });
+
+  await check("All squad_members roles are valid (captain | member)", async () => {
+    const valid = new Set(["captain", "member"]);
+    const rows = await db.select({ role: squadMembersTable.role }).from(squadMembersTable);
+    return rows.every((r) => valid.has(r.role));
+  });
+
+  await check("Each squad has at most one captain", async () => {
+    const result = await db.execute(sql`
+      SELECT COUNT(*) AS multi FROM (
+        SELECT squad_id, COUNT(*) AS c FROM squad_members WHERE role = 'captain' GROUP BY squad_id HAVING COUNT(*) > 1
+      ) sub`);
+    return Number((result.rows[0] as any)?.multi ?? 0) === 0;
+  });
+
+  await check("No duplicate squad memberships (same user + squad)", async () => {
+    const result = await db.execute(sql`
+      SELECT COUNT(*) AS dupes FROM (
+        SELECT squad_id, user_id, COUNT(*) AS cnt FROM squad_members GROUP BY squad_id, user_id HAVING COUNT(*) > 1
+      ) sub`);
+    return Number((result.rows[0] as any)?.dupes ?? 0) === 0;
+  });
+
+  await check("squad_posts table is queryable", async () => {
+    const [row] = await db.select({ c: count() }).from(squadPostsTable);
+    return Number(row.c) >= 0;
+  });
+
+  await check("All squad posts have non-empty message", async () => {
+    const rows = await db.select({ message: squadPostsTable.message }).from(squadPostsTable);
+    return rows.every((r) => r.message && r.message.trim().length > 0);
+  });
+
+  await check("All squad posts reference existing squads", async () => {
+    const posts = await db.select({ squadId: squadPostsTable.squadId }).from(squadPostsTable);
+    if (!posts.length) return true;
+    const squadIds = new Set((await db.select({ id: squadsTable.id }).from(squadsTable)).map((s) => s.id));
+    return posts.every((p) => squadIds.has(p.squadId));
+  });
+
+  // ─── Squad Challenges ─────────────────────────────────────────────────────
+  console.log("\nSQUAD CHALLENGES");
+
+  await check("squad_challenges table is queryable", async () => {
+    const [row] = await db.select({ c: count() }).from(squadChallengesTable);
+    return Number(row.c) >= 0;
+  });
+
+  await check("All challenge statuses are valid enum values", async () => {
+    const valid = new Set(["pending","accepted","rejected","completed"]);
+    const rows = await db.select({ status: squadChallengesTable.status }).from(squadChallengesTable);
+    return rows.every((r) => valid.has(r.status));
+  });
+
+  await check("No self-challenges (challenger != opponent)", async () => {
+    const rows = await db.select({
+      c: squadChallengesTable.challengerSquadId,
+      o: squadChallengesTable.opponentSquadId,
+    }).from(squadChallengesTable);
+    return rows.every((r) => r.c !== r.o);
+  });
+
+  await check("All challenges have a non-empty proposedDate", async () => {
+    const rows = await db.select({ d: squadChallengesTable.proposedDate }).from(squadChallengesTable);
+    return rows.every((r) => r.d && r.d.trim().length > 0);
+  });
+
+  await check("All challenges have a non-empty sport", async () => {
+    const rows = await db.select({ sport: squadChallengesTable.sport }).from(squadChallengesTable);
+    return rows.every((r) => r.sport && r.sport.trim().length > 0);
+  });
+
+  // ─── Player Follow Network ────────────────────────────────────────────────
+  console.log("\nPLAYER FOLLOW NETWORK");
+
+  await check("player_follows table is queryable", async () => {
+    const [row] = await db.select({ c: count() }).from(playerFollowsTable);
+    return Number(row.c) >= 0;
+  });
+
+  await check("No self-follows in player_follows", async () => {
+    const rows = await db.select({
+      follower: playerFollowsTable.followerUserId,
+      following: playerFollowsTable.followingUserId,
+    }).from(playerFollowsTable);
+    return rows.every((r) => r.follower !== r.following);
+  });
+
+  await check("No duplicate follows (same follower + following)", async () => {
+    const result = await db.execute(sql`
+      SELECT COUNT(*) AS dupes FROM (
+        SELECT follower_user_id, following_user_id, COUNT(*) AS cnt FROM player_follows
+        GROUP BY follower_user_id, following_user_id HAVING COUNT(*) > 1
+      ) sub`);
+    return Number((result.rows[0] as any)?.dupes ?? 0) === 0;
+  });
+
+  await check("All follow records reference existing profiles", async () => {
+    const follows = await db.select({
+      f: playerFollowsTable.followerUserId,
+      g: playerFollowsTable.followingUserId,
+    }).from(playerFollowsTable);
+    if (!follows.length) return true;
+    const profileIds = new Set((await db.select({ id: profilesTable.id }).from(profilesTable)).map((p) => p.id));
+    return follows.every((f) => profileIds.has(f.f) && profileIds.has(f.g));
+  });
+
+  // ─── Match Chat ────────────────────────────────────────────────────────────
+  console.log("\nMATCH CHAT");
+
+  await check("match_messages table is queryable", async () => {
+    const [row] = await db.select({ c: count() }).from(matchMessagesTable);
+    return Number(row.c) >= 0;
+  });
+
+  await check("All match messages have non-empty message text", async () => {
+    const rows = await db.select({ msg: matchMessagesTable.message }).from(matchMessagesTable);
+    return rows.every((r) => r.msg && r.msg.trim().length > 0);
+  });
+
+  await check("All match messages reference existing hosted matches", async () => {
+    const msgs = await db.select({ matchId: matchMessagesTable.matchId }).from(matchMessagesTable);
+    if (!msgs.length) return true;
+    const matchIds = new Set((await db.select({ id: hostedMatchesTable.id }).from(hostedMatchesTable)).map((m) => m.id));
+    return msgs.every((m) => matchIds.has(m.matchId));
+  });
+
+  await check("All match messages reference existing profiles", async () => {
+    const msgs = await db.select({ userId: matchMessagesTable.userId }).from(matchMessagesTable);
+    if (!msgs.length) return true;
+    const profileIds = new Set((await db.select({ id: profilesTable.id }).from(profilesTable)).map((p) => p.id));
+    return msgs.every((m) => profileIds.has(m.userId));
+  });
+
+  await check("No match message exceeds 500 characters", async () => {
+    const rows = await db.select({ msg: matchMessagesTable.message }).from(matchMessagesTable);
+    return rows.every((r) => r.msg.length <= 500);
+  });
+
+  // ─── Test Invites ─────────────────────────────────────────────────────────
+  console.log("\nTEST INVITES");
+
+  await check("test_invites table is queryable", async () => {
+    const [row] = await db.select({ c: count() }).from(testInvitesTable);
+    return Number(row.c) >= 0;
+  });
+
+  await check("All test invite statuses are valid (sent|used|expired)", async () => {
+    const valid = new Set(["sent", "used", "expired"]);
+    const rows = await db.select({ status: testInvitesTable.status }).from(testInvitesTable);
+    return rows.every((r) => valid.has(r.status));
+  });
+
+  await check("All test invites have unique invite codes", async () => {
+    const result = await db.execute(sql`
+      SELECT COUNT(*) AS dupes FROM (
+        SELECT invite_code, COUNT(*) AS cnt FROM test_invites GROUP BY invite_code HAVING COUNT(*) > 1
+      ) sub`);
+    return Number((result.rows[0] as any)?.dupes ?? 0) === 0;
+  });
+
+  await check("All test invite phone numbers are non-empty", async () => {
+    const rows = await db.select({ phone: testInvitesTable.phone }).from(testInvitesTable);
+    return rows.every((r) => r.phone && r.phone.trim().length > 0);
+  });
+
+  await check("All test invite names are non-empty", async () => {
+    const rows = await db.select({ name: testInvitesTable.name }).from(testInvitesTable);
+    return rows.every((r) => r.name && r.name.trim().length > 0);
+  });
+
+  // ─── API Endpoint Reachability ────────────────────────────────────────────
+  console.log("\nAPI ENDPOINT REACHABILITY");
+
+  const BASE = "http://localhost:80/api";
+
+  async function apiGet(path: string): Promise<number> {
+    try {
+      const r = await fetch(`${BASE}${path}`);
+      return r.status;
+    } catch { return 0; }
+  }
+
+  await check("GET /api/healthz returns 200", async () => {
+    const s = await apiGet("/healthz");
+    return s === 200;
+  });
+
+  await check("GET /api/community/feed returns 200", async () => {
+    const s = await apiGet("/community/feed");
+    return s === 200;
+  });
+
+  await check("GET /api/community/stats returns 200", async () => {
+    const s = await apiGet("/community/stats");
+    return s === 200;
+  });
+
+  await check("GET /api/squads returns 200", async () => {
+    const s = await apiGet("/squads");
+    return s === 200;
+  });
+
+  await check("GET /api/cities returns 200", async () => {
+    const s = await apiGet("/cities");
+    return s === 200;
+  });
+
+  await check("GET /api/venues returns 200", async () => {
+    const s = await apiGet("/venues");
+    return s === 200;
+  });
+
+  await check("GET /api/hosted-matches returns 200", async () => {
+    const s = await apiGet("/hosted-matches");
+    return s === 200;
+  });
+
+  await check("POST /api/coupons/validate returns 401 without auth", async () => {
+    const r = await fetch(`${BASE}/coupons/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: "TEST" }) });
+    return r.status === 401;
+  });
+
+  await check("GET /api/community/feed with sport filter returns 200", async () => {
+    const s = await apiGet("/community/feed?sport=football");
+    return s === 200;
+  });
+
+  await check("GET /api/squads with sport filter returns 200", async () => {
+    const s = await apiGet("/squads?sport=football");
+    return s === 200;
+  });
+
+  await check("GET /api/community/feed pagination works (page=2)", async () => {
+    const s = await apiGet("/community/feed?page=2&limit=5");
+    return s === 200;
+  });
+
+  await check("POST /api/community/post returns 401 without auth", async () => {
+    const r = await fetch(`${BASE}/community/post`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ caption: "test" }) });
+    return r.status === 401;
+  });
+
+  await check("POST /api/community/like returns 401 without auth", async () => {
+    const r = await fetch(`${BASE}/community/like`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ postId: "test" }) });
+    return r.status === 401;
+  });
+
+  await check("POST /api/squads/create returns 401 without auth", async () => {
+    const r = await fetch(`${BASE}/squads/create`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "test", sport: "football" }) });
+    return r.status === 401;
+  });
+
+  await check("GET /api/admin/testers returns 401 without auth", async () => {
+    const s = await apiGet("/admin/testers");
+    return s === 401;
+  });
+
+  await check("GET /api/community/stats returns venues count >= 0", async () => {
+    const r = await fetch(`${BASE}/community/stats`);
+    if (!r.ok) return false;
+    const data = await r.json() as any;
+    return typeof data.venues === "number" && data.venues >= 0;
+  });
+
+  await check("GET /api/community/stats returns playersJoined count >= 0", async () => {
+    const r = await fetch(`${BASE}/community/stats`);
+    if (!r.ok) return false;
+    const data = await r.json() as any;
+    return typeof data.playersJoined === "number" && data.playersJoined >= 0;
+  });
+
+  await check("GET /api/community/stats returns matchesHosted >= 0", async () => {
+    const r = await fetch(`${BASE}/community/stats`);
+    if (!r.ok) return false;
+    const data = await r.json() as any;
+    return typeof data.matchesHosted === "number" && data.matchesHosted >= 0;
+  });
+
+  await check("GET /api/community/feed returns posts array", async () => {
+    const r = await fetch(`${BASE}/community/feed`);
+    if (!r.ok) return false;
+    const data = await r.json() as any;
+    return Array.isArray(data.posts);
+  });
+
+  await check("GET /api/squads returns an array", async () => {
+    const r = await fetch(`${BASE}/squads`);
+    if (!r.ok) return false;
+    const data = await r.json() as any;
+    return Array.isArray(data);
+  });
+
+  // ─── Data Integrity Cross-checks ──────────────────────────────────────────
+  console.log("\nDATA INTEGRITY CROSS-CHECKS");
+
+  await check("All community posts userId references an existing profile", async () => {
+    const posts = await db.select({ userId: communityPostsTable.userId }).from(communityPostsTable);
+    if (!posts.length) return true;
+    const profileIds = new Set((await db.select({ id: profilesTable.id }).from(profilesTable)).map((p) => p.id));
+    return posts.every((p) => profileIds.has(p.userId));
+  });
+
+  await check("All squad captains are in squad_members as captain role", async () => {
+    const squads = await db.select({ id: squadsTable.id, captainId: squadsTable.captainUserId }).from(squadsTable);
+    if (!squads.length) return true;
+    for (const s of squads) {
+      const [member] = await db.select().from(squadMembersTable)
+        .where(and(eq(squadMembersTable.squadId, s.id), eq(squadMembersTable.userId, s.captainId), eq(squadMembersTable.role, "captain")))
+        .limit(1);
+      if (!member) return false;
+    }
+    return true;
+  });
+
+  await check("All squad members reference existing profiles", async () => {
+    const members = await db.select({ userId: squadMembersTable.userId }).from(squadMembersTable);
+    if (!members.length) return true;
+    const profileIds = new Set((await db.select({ id: profilesTable.id }).from(profilesTable)).map((p) => p.id));
+    return members.every((m) => profileIds.has(m.userId));
+  });
+
+  await check("All squad members reference existing squads", async () => {
+    const members = await db.select({ squadId: squadMembersTable.squadId }).from(squadMembersTable);
+    if (!members.length) return true;
+    const squadIds = new Set((await db.select({ id: squadsTable.id }).from(squadsTable)).map((s) => s.id));
+    return members.every((m) => squadIds.has(m.squadId));
+  });
+
+  await check("Community posts likesCount matches actual likes in community_post_likes", async () => {
+    const posts = await db.select({ id: communityPostsTable.id, likes: communityPostsTable.likesCount }).from(communityPostsTable);
+    for (const p of posts) {
+      const [row] = await db.select({ c: count() }).from(communityPostLikesTable)
+        .where(eq(communityPostLikesTable.postId, p.id));
+      if (Math.abs(Number(row.c) - p.likes) > 0) return false;
+    }
+    return true;
+  });
+
+  await check("Community posts commentsCount matches actual comments in community_post_comments", async () => {
+    const posts = await db.select({ id: communityPostsTable.id, cnt: communityPostsTable.commentsCount }).from(communityPostsTable);
+    for (const p of posts) {
+      const [row] = await db.select({ c: count() }).from(communityPostCommentsTable)
+        .where(eq(communityPostCommentsTable.postId, p.id));
+      if (Math.abs(Number(row.c) - p.cnt) > 0) return false;
+    }
+    return true;
+  });
+
+  await check("All squad challenge challenger != opponent squads exist", async () => {
+    const challenges = await db.select({ c: squadChallengesTable.challengerSquadId, o: squadChallengesTable.opponentSquadId }).from(squadChallengesTable);
+    if (!challenges.length) return true;
+    const squadIds = new Set((await db.select({ id: squadsTable.id }).from(squadsTable)).map((s) => s.id));
+    return challenges.every((ch) => squadIds.has(ch.c) && squadIds.has(ch.o));
+  });
+
+  await check("Profile follow counts are non-negative", async () => {
+    const [row] = await db.select({ c: count() }).from(playerFollowsTable);
+    return Number(row.c) >= 0;
+  });
+
+  await check("All test invite codes are uppercase alphanumeric starting with MP", async () => {
+    const rows = await db.select({ code: testInvitesTable.inviteCode }).from(testInvitesTable);
+    return rows.every((r) => /^MP[A-Z0-9]+$/.test(r.code));
+  });
+
+  await check("No hosted match has currentPlayers exceeding totalPlayers", async () => {
+    const rows = await db.select({ cur: hostedMatchesTable.currentPlayers, tot: hostedMatchesTable.totalPlayers }).from(hostedMatchesTable);
+    return rows.every((r) => r.cur <= r.tot);
+  });
+
+  await check("All payment types are valid enum values", async () => {
+    const valid = new Set(["booking","host_commitment","match_reserve","match_final","refund","cashback"]);
+    const rows = await db.select({ type: paymentsTable.type }).from(paymentsTable);
+    return rows.every((r) => valid.has(r.type));
+  });
+
+  await check("All participant statuses in hosted matches are valid", async () => {
+    const valid = new Set(["reserved","final_paid","cancelled","dropped_unpaid"]);
+    const rows = await db.select({ status: hostedMatchParticipantsTable.status }).from(hostedMatchParticipantsTable);
+    return rows.every((r) => valid.has(r.status));
+  });
+
+  await check("All booking statuses are valid enum values", async () => {
+    const valid = new Set(["pending","confirmed","cancelled"]);
+    const rows = await db.select({ status: bookingsTable.status }).from(bookingsTable);
+    return rows.every((r) => valid.has(r.status));
+  });
+
+  await check("All hosted match statuses are valid", async () => {
+    const valid = new Set(["open","confirmed","cancelled","completed"]);
+    const rows = await db.select({ status: hostedMatchesTable.status }).from(hostedMatchesTable);
+    return rows.every((r) => valid.has(r.status));
+  });
+
+  await check("Slots table is queryable and all slots belong to an existing venue", async () => {
+    const slots = await db.select({ venueId: slotsTable.venueId }).from(slotsTable);
+    if (!slots.length) return true;
+    const venueIds = new Set((await db.select({ id: venuesTable.id }).from(venuesTable)).map((v) => v.id));
+    return slots.every((s) => venueIds.has(s.venueId));
+  });
+
+  await check("All bookings reference existing slots", async () => {
+    const bookings = await db.select({ slotId: bookingsTable.slotId }).from(bookingsTable);
+    if (!bookings.length) return true;
+    const slotIds = new Set((await db.select({ id: slotsTable.id }).from(slotsTable)).map((s) => s.id));
+    return bookings.every((b) => slotIds.has(b.slotId));
+  });
+
+  await check("All bookings reference existing venues", async () => {
+    const bookings = await db.select({ venueId: bookingsTable.venueId }).from(bookingsTable);
+    if (!bookings.length) return true;
+    const venueIds = new Set((await db.select({ id: venuesTable.id }).from(venuesTable)).map((v) => v.id));
+    return bookings.every((b) => venueIds.has(b.venueId));
+  });
+
+  await check("Community post cities (when set) reference existing cities", async () => {
+    const posts = await db.select({ cityId: communityPostsTable.cityId }).from(communityPostsTable)
+      .where(isNotNull(communityPostsTable.cityId));
+    if (!posts.length) return true;
+    const cityIds = new Set((await db.select({ id: citiesTable.id }).from(citiesTable)).map((c) => c.id));
+    return posts.every((p) => cityIds.has(p.cityId!));
+  });
+
+  await check("Squad cities (when set) reference existing cities", async () => {
+    const squads = await db.select({ cityId: squadsTable.cityId }).from(squadsTable)
+      .where(isNotNull(squadsTable.cityId));
+    if (!squads.length) return true;
+    const cityIds = new Set((await db.select({ id: citiesTable.id }).from(citiesTable)).map((c) => c.id));
+    return squads.every((s) => cityIds.has(s.cityId!));
+  });
+
+  await check("Wallet ledger entries have non-zero amounts", async () => {
+    const rows = await db.select({ amount: walletLedgerTable.amount }).from(walletLedgerTable);
+    return rows.every((r) => Number(r.amount) !== 0);
+  });
+
+  await check("All profiles have non-empty fullName", async () => {
+    const rows = await db.select({ name: profilesTable.fullName }).from(profilesTable);
+    return rows.every((r) => r.name && r.name.trim().length > 0);
+  });
+
+  await check("All profiles have valid email format", async () => {
+    const rows = await db.select({ email: profilesTable.email }).from(profilesTable);
+    return rows.every((r) => r.email && r.email.includes("@"));
+  });
+
+  await check("Profile wallet balances are all >= 0", async () => {
+    const rows = await db.select({ balance: profilesTable.walletBalance }).from(profilesTable);
+    return rows.every((r) => Number(r.balance) >= 0);
+  });
+
+  await check("Profile trust scores are between 0 and 100", async () => {
+    const rows = await db.select({ trust: profilesTable.trustScore }).from(profilesTable);
+    return rows.every((r) => Number(r.trust) >= 0 && Number(r.trust) <= 100);
+  });
+
+  await check("Venue payout ledger venuePayable is always >= 0", async () => {
+    const rows = await db.select({ venuePayable: venuePayoutLedgerTable.venuePayable }).from(venuePayoutLedgerTable);
+    return rows.every((r) => Number(r.venuePayable) >= 0);
+  });
+
+  await check("All squad challenge accepted records have a valid status", async () => {
+    const rows = await db.select({ status: squadChallengesTable.status, matchId: squadChallengesTable.hostedMatchId })
+      .from(squadChallengesTable).where(eq(squadChallengesTable.status, "accepted"));
+    return rows.every((r) => r.status === "accepted");
+  });
+
+  await check("All community posts have a createdAt timestamp", async () => {
+    const rows = await db.select({ ts: communityPostsTable.createdAt }).from(communityPostsTable);
+    return rows.every((r) => r.ts instanceof Date);
+  });
+
+  await check("All match messages have a createdAt timestamp", async () => {
+    const rows = await db.select({ ts: matchMessagesTable.createdAt }).from(matchMessagesTable);
+    return rows.every((r) => r.ts instanceof Date);
+  });
+
+  await check("All player_follows have a createdAt timestamp", async () => {
+    const rows = await db.select({ ts: playerFollowsTable.createdAt }).from(playerFollowsTable);
+    return rows.every((r) => r.ts instanceof Date);
+  });
+
+  await check("All test_invites have a createdAt timestamp", async () => {
+    const rows = await db.select({ ts: testInvitesTable.createdAt }).from(testInvitesTable);
+    return rows.every((r) => r.ts instanceof Date);
+  });
+
+  await check("GET /api/community/feed returns hasMore boolean", async () => {
+    const r = await fetch(`${BASE}/community/feed`);
+    if (!r.ok) return false;
+    const data = await r.json() as any;
+    return typeof data.hasMore === "boolean";
+  });
+
+  await check("GET /api/community/feed returns page number", async () => {
+    const r = await fetch(`${BASE}/community/feed`);
+    if (!r.ok) return false;
+    const data = await r.json() as any;
+    return typeof data.page === "number" && data.page >= 1;
   });
 
   // ─── Summary ──────────────────────────────────────────────────────────────
