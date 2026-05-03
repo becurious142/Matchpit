@@ -27,6 +27,8 @@ export const profilesTable = pgTable("profiles", {
     .notNull()
     .default("100"),
   isAdmin: boolean("is_admin").notNull().default(false),
+  referralCode: text("referral_code").unique(),
+  referredBy: text("referred_by"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

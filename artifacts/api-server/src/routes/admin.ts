@@ -429,7 +429,9 @@ router.patch("/admin/owner-leads/:leadId/status", requireAuth, async (req, res) 
     if (!admin) return;
 
     const leadId = req.params.leadId as string;
-    const { status } = req.body as { status: "new" | "contacted" | "onboarded" | "rejected" };
+    const { status } = req.body as {
+      status: "new" | "contacted" | "demo" | "onboarded" | "rejected";
+    };
 
     const [updated] = await db
       .update(ownerLeadsTable)
@@ -451,6 +453,10 @@ router.patch("/admin/owner-leads/:leadId/status", requireAuth, async (req, res) 
       sports: updated.sports ?? [],
       message: updated.message ?? null,
       status: updated.status,
+      contactedOn: (updated as any).contactedOn?.toISOString() ?? null,
+      followupDate: (updated as any).followupDate ?? null,
+      notes: (updated as any).notes ?? null,
+      assignedAdmin: (updated as any).assignedAdmin ?? null,
       createdAt: updated.createdAt.toISOString(),
     });
   } catch (err) {

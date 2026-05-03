@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useListVenues, useListSports } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -61,7 +61,14 @@ export default function Venues() {
     setLocation(`/venues?${params.toString()}`, { replace: true });
   };
 
-  const cities = ["Jaipur", "Delhi", "Mumbai", "Bengaluru", "Hyderabad"];
+  const [activeCities, setActiveCities] = useState<{ cityName: string; slug: string }[]>([]);
+  useEffect(() => {
+    fetch("/api/cities")
+      .then((r) => r.json())
+      .then((data: { cityName: string; slug: string }[]) => setActiveCities(data))
+      .catch(() => setActiveCities([{ cityName: "Jaipur", slug: "jaipur" }]));
+  }, []);
+  const cities = activeCities.length > 0 ? activeCities.map((c) => c.cityName) : ["Jaipur"];
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl min-h-screen">

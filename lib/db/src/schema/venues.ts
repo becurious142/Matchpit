@@ -9,11 +9,13 @@ import {
 } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod/v4";
+import { citiesTable } from "./cities";
 
 export const venuesTable = pgTable("venues", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   city: text("city").notNull(),
+  cityId: uuid("city_id").references(() => citiesTable.id),
   address: text("address").notNull(),
   sports: text("sports").array().notNull().default([]),
   pricePerHour: numeric("price_per_hour", { precision: 10, scale: 2 }).notNull(),

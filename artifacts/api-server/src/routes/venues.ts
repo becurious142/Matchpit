@@ -90,20 +90,12 @@ router.get("/venues/sports", async (_req, res) => {
         sportCounts[s] = (sportCounts[s] ?? 0) + 1;
       }
     }
-    const sportMeta: Record<string, { label: string; icon: string }> = {
-      football: { label: "Football", icon: "⚽" },
-      cricket: { label: "Cricket", icon: "🏏" },
-      badminton: { label: "Badminton", icon: "🏸" },
-      tennis: { label: "Tennis", icon: "🎾" },
-      basketball: { label: "Basketball", icon: "🏀" },
-      volleyball: { label: "Volleyball", icon: "🏐" },
-      hockey: { label: "Hockey", icon: "🏑" },
-    };
-    const result = Object.entries(sportCounts).map(([slug, count]) => ({
-      slug,
-      label: sportMeta[slug]?.label ?? slug,
-      icon: sportMeta[slug]?.icon ?? "🏆",
-      venueCount: count,
+    const { SPORTS } = await import("@workspace/db");
+    const result = SPORTS.map((sport) => ({
+      slug: sport.slug,
+      label: sport.label,
+      icon: sport.icon,
+      venueCount: sportCounts[sport.slug] ?? 0,
     }));
     res.json(result);
   } catch (err) {

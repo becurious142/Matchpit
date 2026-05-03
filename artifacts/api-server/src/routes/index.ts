@@ -10,11 +10,16 @@ import dashboardRouter from "./dashboard";
 import notificationsRouter from "./notifications";
 import ownerLeadsRouter from "./owner-leads";
 import adminRouter from "./admin";
+import adminExtendedRouter from "./admin-extended";
+import citiesRouter from "./cities";
+import couponsRouter from "./coupons";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(profileRouter);
+router.use(citiesRouter);
+router.use(couponsRouter);
 router.use(venuesRouter);
 router.use(bookingsRouter);
 router.use(hostedMatchesRouter);
@@ -24,5 +29,6 @@ router.use(dashboardRouter);
 router.use(notificationsRouter);
 router.use(ownerLeadsRouter);
 router.use(adminRouter);
+router.use(adminExtendedRouter);
 
 export default router;

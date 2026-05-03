@@ -13,6 +13,7 @@ import { z } from "zod/v4";
 import { venuesTable } from "./venues";
 import { slotsTable } from "./slots";
 import { profilesTable } from "./profiles";
+import { citiesTable } from "./cities";
 
 export const matchSkillLevelEnum = pgEnum("match_skill_level", [
   "beginner",
@@ -59,6 +60,7 @@ export const hostedMatchesTable = pgTable("hosted_matches", {
   finalFeePerPlayer: numeric("final_fee_per_player", { precision: 10, scale: 2 }).notNull(),
   totalVenueCost: numeric("total_venue_cost", { precision: 10, scale: 2 }).notNull(),
   notes: text("notes"),
+  cityId: uuid("city_id").references(() => citiesTable.id),
   status: matchStatusEnum("status").notNull().default("open"),
   financialStatus: matchFinancialStatusEnum("financial_status").notNull().default("pending"),
   hostPaymentId: uuid("host_payment_id"),

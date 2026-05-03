@@ -58,11 +58,11 @@ export default function Profile() {
   };
 
   const availableSports = [
-    { id: "football", label: "Football", icon: "⚽" },
-    { id: "cricket", label: "Cricket", icon: "🏏" },
-    { id: "badminton", label: "Badminton", icon: "🏸" },
-    { id: "tennis", label: "Tennis", icon: "🎾" },
-    { id: "basketball", label: "Basketball", icon: "🏀" },
+    { id: "cricket",     label: "Cricket",     icon: "🏏" },
+    { id: "box_cricket", label: "Box Cricket",  icon: "📦" },
+    { id: "football",    label: "Football",     icon: "⚽" },
+    { id: "badminton",   label: "Badminton",    icon: "🏸" },
+    { id: "pickleball",  label: "Pickleball",   icon: "🏓" },
   ];
 
   if (isLoading) {
@@ -82,6 +82,29 @@ export default function Profile() {
                 <div className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Email (Read Only)</div>
                 <div className="font-mono text-sm bg-muted p-3 rounded-md border border-border/50">{profile?.email}</div>
               </div>
+
+              {(profile as any)?.referralCode && (
+                <div className="space-y-2 mb-6 p-4 rounded-lg bg-primary/5 border border-primary/20">
+                  <div className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Your Referral Code</div>
+                  <div className="flex items-center gap-3">
+                    <div className="font-mono text-lg font-bold tracking-widest text-primary bg-background p-3 rounded-md border border-primary/30 flex-1">
+                      {(profile as any).referralCode}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        navigator.clipboard.writeText((profile as any).referralCode);
+                        toast({ title: "Copied!", description: "Referral code copied to clipboard." });
+                      }}
+                    >
+                      Copy
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Share this code with friends to earn rewards when they complete their first booking.</p>
+                </div>
+              )}
 
               <FormField
                 control={form.control}

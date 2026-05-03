@@ -1,7 +1,9 @@
 import {
   pgTable,
   text,
+  numeric,
   timestamp,
+  date,
   uuid,
   pgEnum,
 } from "drizzle-orm/pg-core";
@@ -11,6 +13,7 @@ import { z } from "zod/v4";
 export const ownerLeadStatusEnum = pgEnum("owner_lead_status", [
   "new",
   "contacted",
+  "demo",
   "onboarded",
   "rejected",
 ]);
@@ -24,6 +27,11 @@ export const ownerLeadsTable = pgTable("owner_leads", {
   sports: text("sports").array().notNull().default([]),
   message: text("message"),
   status: ownerLeadStatusEnum("status").notNull().default("new"),
+  contactedOn: timestamp("contacted_on"),
+  followupDate: date("followup_date"),
+  notes: text("notes"),
+  assignedAdmin: text("assigned_admin"),
+  expectedInventoryValue: numeric("expected_inventory_value", { precision: 12, scale: 2 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
