@@ -8,9 +8,10 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { Calendar, Clock, MapPin, CheckCircle2, Wallet } from "lucide-react";
+import { Calendar, Clock, MapPin, CheckCircle2, Wallet, Info } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { loadRazorpay } from "@/lib/razorpay";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface WalletData { balance: number; walletAutoUse: boolean; }
 
@@ -310,24 +311,39 @@ export default function Book() {
             <CardContent className="p-6">
               <h3 className="font-bold uppercase tracking-wider mb-6">Payment Summary</h3>
               
-              <div className="space-y-4 text-sm mb-4">
+              <div className="space-y-3 text-sm mb-4">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Turf Fee (1 hour)</span>
+                  <span className="text-muted-foreground">Slot fee (1 hr)</span>
                   <span className="font-medium">₹{price}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Platform Fee</span>
+                <div className="flex justify-between items-start">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-muted-foreground flex items-center gap-1">
+                      Platform fee
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="w-3 h-3 cursor-help text-muted-foreground/60 hidden md:inline" />
+                        </TooltipTrigger>
+                        <TooltipContent side="left" className="max-w-[200px] text-xs">
+                          Covers app support, secure payments, and instant booking confirmation.
+                        </TooltipContent>
+                      </Tooltip>
+                    </span>
+                    <span className="text-[10px] text-muted-foreground/70 md:hidden">
+                      App support &amp; secure payments
+                    </span>
+                  </div>
                   <span className="font-medium">₹{platformFee}</span>
                 </div>
                 {walletAmountUsed > 0 && (
                   <div className="flex justify-between text-green-400">
-                    <span>Wallet Discount</span>
-                    <span className="font-bold">-₹{walletAmountUsed.toFixed(2)}</span>
+                    <span>Wallet credit applied</span>
+                    <span className="font-bold">−₹{walletAmountUsed.toFixed(2)}</span>
                   </div>
                 )}
                 <Separator className="my-2" />
                 <div className="flex justify-between text-lg font-bold">
-                  <span>Total Due</span>
+                  <span>Total due</span>
                   <span className="text-primary">₹{razorpayAmount.toFixed(2)}</span>
                 </div>
               </div>

@@ -85,3 +85,27 @@ export async function getProfileByClerkId(clerkId: string) {
     .limit(1);
   return profile ?? null;
 }
+
+export async function requireAdmin(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) {
+  const { userId } = getAuth(req);
+  if (!userId) {
+    res.status(401).json({ error: "unauthorized", message: "Authentication required" });
+    return;
+  }
+  const profile = await getProfileByClerkId(userId);
+  if (!profile) {
+    res.status(401).json({ error: "unauthorized", message: "Profile not found" });
+    return;
+  }
+  if (!profile.isAdmin) {
+    res.status(403).json({ error: "forbidden", message: "Admin access required" });
+    return;
+  }
+  // Attach profile to request for downstream use
+  (req as any).adminProfile = profile;
+  next();
+}

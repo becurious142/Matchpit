@@ -24,9 +24,17 @@ export interface Profile {
   favoriteSports: string[];
   avatarUrl?: string | null;
   walletBalance: number;
+  walletAutoUse: boolean;
   badgeCount: number;
   trustScore: number;
   isAdmin: boolean;
+  isSuspended: boolean;
+  referralCode?: string | null;
+  referredBy?: string | null;
+  onboardingComplete: boolean;
+  preferredAreas: string[];
+  primarySkillLevel?: string | null;
+  strikePoints: number;
   createdAt: string;
 }
 
@@ -36,6 +44,9 @@ export interface UpdateProfileBody {
   city?: string;
   favoriteSports?: string[];
   avatarUrl?: string;
+  preferredAreas?: string[];
+  primarySkillLevel?: string;
+  onboardingComplete?: boolean;
 }
 
 export interface Venue {

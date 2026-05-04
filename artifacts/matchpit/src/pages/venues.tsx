@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { MapPin, Search, Filter } from "lucide-react";
 import { motion } from "framer-motion";
+import { formatSportLabel, getVenueFallbackImage } from "@/lib/sport-utils";
 
 export default function Venues() {
   const [location, setLocation] = useLocation();
@@ -155,13 +156,13 @@ export default function Venues() {
                   <Card className="overflow-hidden group cursor-pointer hover:border-primary transition-colors bg-card/50 backdrop-blur-sm border-border/50 h-full flex flex-col">
                     <div className="relative h-48 overflow-hidden bg-muted shrink-0">
                       {venue.coverImage ? (
-                        <img 
-                          src={venue.coverImage} 
-                          alt={venue.name} 
+                        <img
+                          src={venue.coverImage}
+                          alt={venue.name}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                         />
                       ) : (
-                        <img src={`/venues/venue${(i % 4) + 1}.png`} alt="Venue" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                        <img src={getVenueFallbackImage(venue.sports, i)} alt="Venue" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                       )}
                       <div className="absolute top-3 right-3 bg-black/80 backdrop-blur-md text-white px-2 py-1 rounded-md text-xs font-bold flex items-center gap-1 border border-white/10">
                         ⭐ {venue.rating.toFixed(1)}
@@ -178,7 +179,7 @@ export default function Venues() {
                         <div className="flex flex-wrap gap-1">
                           {venue.sports.slice(0, 3).map(s => (
                             <Badge key={s} variant="outline" className="text-[10px] uppercase font-bold border-primary/30 text-primary">
-                              {s}
+                              {formatSportLabel(s)}
                             </Badge>
                           ))}
                           {venue.sports.length > 3 && (

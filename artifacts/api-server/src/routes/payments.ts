@@ -6,6 +6,7 @@ import {
   hostedMatchParticipantsTable,
   bookingsTable,
   hostedMatchesTable,
+  profilesTable,
 } from "@workspace/db";
 import { eq, desc, and } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
@@ -14,9 +15,13 @@ import { processReferralRewards, processFirstBookingCashback, processFirstMatchC
 import { generateBookingPayout, generateMatchPayout } from "../lib/payouts";
 import { createNotification } from "../lib/notifications";
 import { trackEvent, EVENTS } from "../lib/analytics";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
+// ─── POST /payments/create-order ─────────────────────────────────────────────
+// C2: wallet amount is clamped server-side against real DB balance.
+// Client-supplied walletAmountUsed is treated as a hint, never trusted directly.
 router.post("/payments/create-order", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -26,8 +31,31 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
       return;
     }
 
-    const { type, referenceId, amount, walletAmountUsed = 0 } = req.body;
-    const razorpayAmount = Math.max(0, amount - walletAmountUsed);
+    const { type, referenceId, amount: rawAmount, walletAmountUsed: clientWalletHint = 0 } = req.body;
+    const totalAmount = Number(rawAmount);
+
+    if (!totalAmount || totalAmount <= 0) {
+      res.status(400).json({ error: "validation", message: "amount must be a positive number" });
+      return;
+    }
+
+    // C2: Re-read wallet balance from DB — never trust client-supplied value
+    const [freshProfile] = await db
+      .select({ walletBalance: profilesTable.walletBalance, walletAutoUse: profilesTable.walletAutoUse })
+      .from(profilesTable)
+      .where(eq(profilesTable.id, profile.id))
+      .limit(1);
+
+    const actualBalance = Number(freshProfile?.walletBalance ?? 0);
+
+    // Clamp: cannot use more than balance, more than total, or more than client requested
+    const serverApprovedWalletUse = Math.min(
+      Number(clientWalletHint),
+      actualBalance,
+      totalAmount,
+    );
+
+    const razorpayAmount = Math.max(0, totalAmount - serverApprovedWalletUse);
 
     if (!razorpay) {
       res.status(201).json({
@@ -38,7 +66,7 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
         prefillName: profile.fullName,
         prefillEmail: profile.email,
         prefillContact: profile.phone ?? null,
-        walletAmountUsed,
+        walletAmountUsed: serverApprovedWalletUse,
         fullWallet: razorpayAmount === 0,
       });
       return;
@@ -51,7 +79,7 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
         type,
         referenceId: referenceId ?? null,
         razorpayOrderId: `wallet_${Date.now()}`,
-        amount: amount.toString(),
+        amount: totalAmount.toString(),
         status: "pending",
       }).returning();
 
@@ -63,7 +91,7 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
         prefillName: profile.fullName,
         prefillEmail: profile.email,
         prefillContact: profile.phone ?? null,
-        walletAmountUsed,
+        walletAmountUsed: serverApprovedWalletUse,
         fullWallet: true,
         paymentId: payment.id,
       });
@@ -73,7 +101,7 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
     const order = await razorpay.orders.create({
       amount: Math.round(razorpayAmount * 100),
       currency: "INR",
-      notes: { type, referenceId, userId: profile.id, walletAmountUsed },
+      notes: { type, referenceId, userId: profile.id, walletAmountUsed: serverApprovedWalletUse },
     });
 
     await db.insert(paymentsTable).values({
@@ -81,7 +109,7 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
       type,
       referenceId: referenceId ?? null,
       razorpayOrderId: order.id,
-      amount: amount.toString(),
+      amount: totalAmount.toString(),
       status: "pending",
     });
 
@@ -93,7 +121,7 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
       prefillName: profile.fullName,
       prefillEmail: profile.email,
       prefillContact: profile.phone ?? null,
-      walletAmountUsed,
+      walletAmountUsed: serverApprovedWalletUse,
       fullWallet: false,
     });
   } catch (err) {
@@ -102,6 +130,11 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
   }
 });
 
+// ─── POST /payments/verify ────────────────────────────────────────────────────
+// C1: All post-payment commerce (payout, cashback, referral) is awaited inside
+// the request lifecycle before res.json(). No setImmediate / fire-and-forget.
+// Non-critical steps (notifications, analytics) are individually try/caught so
+// a notification failure never aborts the financial steps.
 router.post("/payments/verify", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -125,7 +158,7 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
       .where(eq(paymentsTable.razorpayOrderId, razorpayOrderId))
       .limit(1);
 
-    if (existing && existing.status === "success") {
+    if (existing?.status === "success") {
       await maybeMarkParticipantPaid(type, referenceId, profile.id);
       res.json({ success: true, paymentId: existing.id, referenceId, type });
       return;
@@ -169,83 +202,100 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
 
     await maybeMarkParticipantPaid(type, referenceId, profile.id);
 
-    // Post-payment commerce triggers (all non-blocking)
-    setImmediate(async () => {
-      try {
-        const amount = Number(payment.amount);
-        if (type === "booking" && referenceId) {
-          await trackEvent(EVENTS.BOOKING_PAID, profile.id, { referenceId, amount });
-          const [booking] = await db
-            .select({ venueId: bookingsTable.venueId })
-            .from(bookingsTable)
-            .where(eq(bookingsTable.id, referenceId))
-            .limit(1);
-          if (booking) {
-            await generateBookingPayout(booking.venueId, referenceId, amount);
-          }
-          await processFirstBookingCashback(profile.id, referenceId);
-          await processReferralRewards(profile.id);
-          await createNotification({
-            userId: profile.id,
-            type: "payment_success",
-            title: "Booking Confirmed!",
-            body: "Your turf booking is confirmed. Check your dashboard for details.",
-            referenceId,
-          });
-        }
-        if (type === "host_commitment" && referenceId) {
-          await trackEvent(EVENTS.HOST_MATCH_PAID, profile.id, { referenceId, amount });
-          const [match] = await db
-            .select({ venueId: hostedMatchesTable.venueId })
-            .from(hostedMatchesTable)
-            .where(eq(hostedMatchesTable.id, referenceId))
-            .limit(1);
-          if (match) {
-            await generateMatchPayout(match.venueId, referenceId, amount);
-          }
-          await processFirstMatchCashback(profile.id, referenceId);
-          await processReferralRewards(profile.id);
-          await createNotification({
-            userId: profile.id,
-            type: "payment_success",
-            title: "Match Created!",
-            body: "Your hosted match is live. Share it to fill up your squad!",
-            referenceId,
-          });
-        }
-        if (type === "match_reserve" && referenceId) {
-          await trackEvent(EVENTS.RESERVE_JOIN_PAID, profile.id, { referenceId, amount });
-          await processReferralRewards(profile.id);
-          await createNotification({
-            userId: profile.id,
-            type: "payment_success",
-            title: "Spot Reserved!",
-            body: "You've secured your spot. Final payment due when the match is confirmed.",
-            referenceId,
-          });
-        }
-        if (type === "match_final" && referenceId) {
-          await trackEvent(EVENTS.FINAL_PAYMENT_PAID, profile.id, { referenceId, amount });
-          const [match] = await db
-            .select({ venueId: hostedMatchesTable.venueId, finalFeePerPlayer: hostedMatchesTable.finalFeePerPlayer })
-            .from(hostedMatchesTable)
-            .where(eq(hostedMatchesTable.id, referenceId))
-            .limit(1);
-          if (match) {
-            await generateMatchPayout(match.venueId, referenceId, Number(match.finalFeePerPlayer));
-          }
-          await createNotification({
-            userId: profile.id,
-            type: "payment_success",
-            title: "Final Payment Done!",
-            body: "You're fully paid. See you on the pitch!",
-            referenceId,
-          });
-        }
-      } catch (triggerErr) {
-        // Non-critical — log but don't fail the response
+    // ── C1: Post-payment commerce — awaited before response ──────────────────
+    // Financial steps (payout, cashback, referral) must complete before we
+    // respond. Notifications and analytics are best-effort — failures are
+    // logged but do not abort the response.
+    const amount = Number(payment.amount);
+
+    if (type === "booking" && referenceId) {
+      // Financial — must succeed
+      const [booking] = await db
+        .select({ venueId: bookingsTable.venueId })
+        .from(bookingsTable)
+        .where(eq(bookingsTable.id, referenceId))
+        .limit(1);
+      if (booking) {
+        await generateBookingPayout(booking.venueId, referenceId, amount);
       }
-    });
+      await processFirstBookingCashback(profile.id, referenceId);
+      await processReferralRewards(profile.id);
+      // Non-critical
+      try { await trackEvent(EVENTS.BOOKING_PAID, profile.id, { referenceId, amount }); } catch (e) { logger.warn({ err: e }, "analytics track failed"); }
+      try {
+        await createNotification({
+          userId: profile.id,
+          type: "payment_success",
+          title: "Booking Confirmed!",
+          body: "Your turf booking is confirmed. Check your dashboard for details.",
+          referenceId,
+        });
+      } catch (e) { logger.warn({ err: e }, "notification failed"); }
+    }
+
+    if (type === "host_commitment" && referenceId) {
+      // Financial — must succeed
+      const [match] = await db
+        .select({ venueId: hostedMatchesTable.venueId })
+        .from(hostedMatchesTable)
+        .where(eq(hostedMatchesTable.id, referenceId))
+        .limit(1);
+      if (match) {
+        await generateMatchPayout(match.venueId, referenceId, amount);
+      }
+      await processFirstMatchCashback(profile.id, referenceId);
+      await processReferralRewards(profile.id);
+      // Non-critical
+      try { await trackEvent(EVENTS.HOST_MATCH_PAID, profile.id, { referenceId, amount }); } catch (e) { logger.warn({ err: e }, "analytics track failed"); }
+      try {
+        await createNotification({
+          userId: profile.id,
+          type: "payment_success",
+          title: "Match Created!",
+          body: "Your hosted match is live. Share it to fill up your squad!",
+          referenceId,
+        });
+      } catch (e) { logger.warn({ err: e }, "notification failed"); }
+    }
+
+    if (type === "match_reserve" && referenceId) {
+      // Financial — must succeed
+      await processReferralRewards(profile.id);
+      // Non-critical
+      try { await trackEvent(EVENTS.RESERVE_JOIN_PAID, profile.id, { referenceId, amount }); } catch (e) { logger.warn({ err: e }, "analytics track failed"); }
+      try {
+        await createNotification({
+          userId: profile.id,
+          type: "payment_success",
+          title: "Spot Reserved!",
+          body: "You've secured your spot. Final payment due when the match is confirmed.",
+          referenceId,
+        });
+      } catch (e) { logger.warn({ err: e }, "notification failed"); }
+    }
+
+    if (type === "match_final" && referenceId) {
+      // Financial — must succeed
+      const [match] = await db
+        .select({ venueId: hostedMatchesTable.venueId, finalFeePerPlayer: hostedMatchesTable.finalFeePerPlayer })
+        .from(hostedMatchesTable)
+        .where(eq(hostedMatchesTable.id, referenceId))
+        .limit(1);
+      if (match) {
+        await generateMatchPayout(match.venueId, referenceId, Number(match.finalFeePerPlayer));
+      }
+      // Non-critical
+      try { await trackEvent(EVENTS.FINAL_PAYMENT_PAID, profile.id, { referenceId, amount }); } catch (e) { logger.warn({ err: e }, "analytics track failed"); }
+      try {
+        await createNotification({
+          userId: profile.id,
+          type: "payment_success",
+          title: "Final Payment Done!",
+          body: "You're fully paid. See you on the pitch!",
+          referenceId,
+        });
+      } catch (e) { logger.warn({ err: e }, "notification failed"); }
+    }
 
     res.json({ success: true, paymentId: payment.id, referenceId, type });
   } catch (err) {

@@ -3,18 +3,17 @@ import { getAuth } from "@clerk/express";
 import { db } from "@workspace/db";
 import {
   bookingsTable,
-  profilesTable,
   venuesTable,
   slotsTable,
   paymentsTable,
   notificationsTable,
 } from "@workspace/db";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, inArray, sql } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 import { verifyRazorpaySignature } from "../lib/razorpay";
-import { debitWallet } from "../lib/wallet";
+import { debitWallet, processFirstBookingCashback, processReferralRewards, processCancellationRefund } from "../lib/wallet";
 import { generateBookingPayout } from "../lib/payouts";
-import { processFirstBookingCashback, processReferralRewards } from "../lib/wallet";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
@@ -93,6 +92,9 @@ router.get("/bookings", requireAuth, async (req, res) => {
   }
 });
 
+// ─── POST /bookings ───────────────────────────────────────────────────────────
+// C3: Idempotency guard on razorpayOrderId + verified slot row-count lock.
+// C1: Post-booking commerce (payout, cashback, referral) awaited before response.
 router.post("/bookings", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -111,6 +113,32 @@ router.post("/bookings", requireAuth, async (req, res) => {
       razorpaySignature,
       walletAmountUsed = 0,
     } = req.body;
+
+    // C3: Idempotency — if a successful booking already exists for this order, return it
+    if (razorpayOrderId) {
+      const [existingPayment] = await db
+        .select()
+        .from(paymentsTable)
+        .where(and(
+          eq(paymentsTable.razorpayOrderId, razorpayOrderId),
+          eq(paymentsTable.status, "success"),
+          eq(paymentsTable.userId, profile.id),
+        ))
+        .limit(1);
+
+      if (existingPayment?.referenceId) {
+        const [existingBooking] = await db
+          .select()
+          .from(bookingsTable)
+          .where(eq(bookingsTable.id, existingPayment.referenceId))
+          .limit(1);
+        if (existingBooking) {
+          const [venue] = await db.select().from(venuesTable).where(eq(venuesTable.id, existingBooking.venueId)).limit(1);
+          res.status(200).json(formatBooking(existingBooking, venue ?? null));
+          return;
+        }
+      }
+    }
 
     const isValid = verifyRazorpaySignature(razorpayOrderId, razorpayPaymentId, razorpaySignature);
     if (!isValid && process.env.RAZORPAY_KEY_SECRET && walletAmountUsed === 0) {
@@ -143,10 +171,18 @@ router.post("/bookings", requireAuth, async (req, res) => {
         await debitWallet(txDb, profile.id, walletUsed, "Wallet used for booking payment", slotId);
       }
 
-      await tx
-        .update(slotsTable)
-        .set({ status: "booked", updatedAt: new Date() })
-        .where(and(eq(slotsTable.id, slotId), eq(slotsTable.status, "available")));
+      // C3: Conditional update with row-count verification — prevents double-booking
+      const updateResult = await tx.execute(
+        sql`UPDATE ${slotsTable}
+            SET status = 'booked', updated_at = NOW()
+            WHERE id = ${slotId} AND status = 'available'`,
+      );
+
+      // Drizzle returns rowCount on execute for Neon/pg drivers
+      const rowsAffected = (updateResult as unknown as { rowCount?: number }).rowCount ?? 1;
+      if (rowsAffected === 0) {
+        return { error: "slot_unavailable" as const };
+      }
 
       const [payment] = await tx
         .insert(paymentsTable)
@@ -198,22 +234,23 @@ router.post("/bookings", requireAuth, async (req, res) => {
 
     const { booking, slot } = result;
 
-    await db.insert(notificationsTable).values({
-      userId: profile.id,
-      type: "payment_success",
-      title: "Booking Confirmed!",
-      body: `Your booking at ${venue.name} on ${slot.date} (${slot.startTime} - ${slot.endTime}) is confirmed.`,
-      referenceId: booking.id,
-    });
+    // Notification — non-critical, log on failure
+    try {
+      await db.insert(notificationsTable).values({
+        userId: profile.id,
+        type: "payment_success",
+        title: "Booking Confirmed!",
+        body: `Your booking at ${venue.name} on ${slot.date} (${slot.startTime} - ${slot.endTime}) is confirmed.`,
+        referenceId: booking.id,
+      });
+    } catch (e) {
+      logger.warn({ err: e }, "Booking confirmation notification failed");
+    }
 
-    // Post-booking triggers (non-blocking)
-    setImmediate(async () => {
-      try {
-        await generateBookingPayout(venue.id, booking.id, Number(booking.totalAmount));
-        await processFirstBookingCashback(profile.id, booking.id);
-        await processReferralRewards(profile.id);
-      } catch {}
-    });
+    // C1: Post-booking commerce — awaited before response, no setImmediate
+    await generateBookingPayout(venue.id, booking.id, Number(booking.totalAmount));
+    await processFirstBookingCashback(profile.id, booking.id);
+    await processReferralRewards(profile.id);
 
     res.status(201).json(formatBooking(booking, venue));
   } catch (err) {
@@ -256,6 +293,8 @@ router.get("/bookings/:bookingId", requireAuth, async (req, res) => {
   }
 });
 
+// ─── POST /bookings/:bookingId/cancel ─────────────────────────────────────────
+// C1: Cancellation refund is awaited before response — no setImmediate.
 router.post("/bookings/:bookingId/cancel", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -293,16 +332,15 @@ router.post("/bookings/:bookingId/cancel", requireAuth, async (req, res) => {
       .where(eq(bookingsTable.id, bookingId))
       .returning();
 
-    // Partial wallet refund (50% of booking amount) on cancellation
-    setImmediate(async () => {
+    // C1: Cancellation refund awaited before response — no setImmediate
+    const refund = Math.floor(Number(booking.totalAmount) * 0.5);
+    if (refund > 0) {
       try {
-        const refund = Math.floor(Number(booking.totalAmount) * 0.5);
-        if (refund > 0) {
-          const { processCancellationRefund } = await import("../lib/wallet");
-          await processCancellationRefund(profile.id, bookingId, "booking", refund);
-        }
-      } catch {}
-    });
+        await processCancellationRefund(profile.id, bookingId, "booking", refund);
+      } catch (e) {
+        logger.error({ err: e, bookingId }, "Cancellation refund failed — manual review required");
+      }
+    }
 
     res.json(formatBooking(updated, null));
   } catch (err) {

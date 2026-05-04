@@ -29,6 +29,10 @@ function formatProfile(p: typeof profilesTable.$inferSelect) {
     isSuspended: p.isSuspended,
     referralCode: p.referralCode ?? null,
     referredBy: p.referredBy ?? null,
+    onboardingComplete: p.onboardingComplete,
+    preferredAreas: p.preferredAreas ?? [],
+    primarySkillLevel: p.primarySkillLevel ?? null,
+    strikePoints: p.strikePoints,
     createdAt: p.createdAt.toISOString(),
   };
 }
@@ -65,7 +69,7 @@ router.get("/profile/me", requireAuth, async (req, res) => {
 router.put("/profile/me", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
-    const { fullName, phone, city, favoriteSports, avatarUrl } = req.body;
+    const { fullName, phone, city, favoriteSports, avatarUrl, preferredAreas, primarySkillLevel, onboardingComplete } = req.body;
 
     const existing = await db
       .select()
@@ -86,6 +90,9 @@ router.put("/profile/me", requireAuth, async (req, res) => {
     if (city !== undefined) updateData.city = city;
     if (favoriteSports !== undefined) updateData.favoriteSports = favoriteSports;
     if (avatarUrl !== undefined) updateData.avatarUrl = avatarUrl;
+    if (preferredAreas !== undefined) updateData.preferredAreas = preferredAreas;
+    if (primarySkillLevel !== undefined) updateData.primarySkillLevel = primarySkillLevel;
+    if (onboardingComplete !== undefined) updateData.onboardingComplete = onboardingComplete;
 
     const [updated] = await db
       .update(profilesTable)

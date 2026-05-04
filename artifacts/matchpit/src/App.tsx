@@ -4,6 +4,7 @@ import { publishableKeyFromHost } from '@clerk/react/internal';
 import { Switch, Route, useLocation, Router as WouterRouter, Redirect } from 'wouter';
 import { QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
+import { useGetMyProfile } from "@workspace/api-client-react";
 
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -29,6 +30,7 @@ import CommunityPage from "@/pages/community";
 import SquadsPage from "@/pages/squads";
 import SquadDetailPage from "@/pages/squad-detail";
 import NotFound from "@/pages/not-found";
+import Onboarding from "@/pages/onboarding";
 
 const clerkPubKey = publishableKeyFromHost(
   window.location.hostname,
@@ -72,6 +74,20 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
   return <Component />;
 }
 
+function OnboardingGuard({ component: Component }: { component: React.ComponentType<any> }) {
+  const { isSignedIn, isLoaded } = useUser();
+  const { data: profile, isLoading: profileLoading } = useGetMyProfile();
+  const [location] = useLocation();
+
+  if (!isLoaded || profileLoading) return null;
+  if (!isSignedIn) return <Redirect to="/" />;
+  // Redirect to onboarding if profile exists but onboarding not complete
+  if (profile && !profile.onboardingComplete && location !== "/onboarding") {
+    return <Redirect to="/onboarding" />;
+  }
+  return <Component />;
+}
+
 function Router() {
   return (
     <Layout>
@@ -84,15 +100,16 @@ function Router() {
         <Route path="/matches/:id" component={MatchDetail} />
         <Route path="/host" component={() => <ProtectedRoute component={HostMatch} />} />
 
-        <Route path="/dashboard" component={() => <ProtectedRoute component={Dashboard} />} />
-        <Route path="/dashboard/bookings" component={() => <ProtectedRoute component={DashboardBookings} />} />
-        <Route path="/dashboard/matches" component={() => <ProtectedRoute component={DashboardMatches} />} />
-        <Route path="/dashboard/wallet" component={() => <ProtectedRoute component={DashboardWallet} />} />
+        <Route path="/dashboard" component={() => <OnboardingGuard component={Dashboard} />} />
+        <Route path="/dashboard/bookings" component={() => <OnboardingGuard component={DashboardBookings} />} />
+        <Route path="/dashboard/matches" component={() => <OnboardingGuard component={DashboardMatches} />} />
+        <Route path="/dashboard/wallet" component={() => <OnboardingGuard component={DashboardWallet} />} />
 
-        <Route path="/profile" component={() => <ProtectedRoute component={Profile} />} />
-        <Route path="/dashboard/notifications" component={() => <ProtectedRoute component={NotificationsPage} />} />
+        <Route path="/profile" component={() => <OnboardingGuard component={Profile} />} />
+        <Route path="/dashboard/notifications" component={() => <OnboardingGuard component={NotificationsPage} />} />
         <Route path="/admin" component={() => <ProtectedRoute component={Admin} />} />
-        <Route path="/owner" component={() => <ProtectedRoute component={OwnerDashboard} />} />
+        <Route path="/owner" component={() => <OnboardingGuard component={OwnerDashboard} />} />
+        <Route path="/onboarding" component={() => <ProtectedRoute component={Onboarding} />} />
         <Route path="/community" component={CommunityPage} />
         <Route path="/squads" component={SquadsPage} />
         <Route path="/squads/:id" component={SquadDetailPage} />

@@ -60,27 +60,27 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </main>
 
       {/* Mobile Bottom Nav */}
-      <nav className="md:hidden fixed bottom-0 w-full border-t border-border/40 bg-background/95 backdrop-blur z-50 flex justify-around items-center p-2 pb-safe">
-        <Link href="/" className={`flex flex-col items-center p-2 ${location === '/' ? 'text-primary' : 'text-muted-foreground'}`}>
-          <Home className="w-5 h-5 mb-1" />
+      <nav className="md:hidden fixed bottom-0 w-full border-t border-border/40 bg-background/95 backdrop-blur z-50 flex justify-around items-center px-1 pb-safe" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 8px)" }}>
+        <Link href="/" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location === '/' ? 'text-primary' : 'text-muted-foreground'}`}>
+          <Home className="w-6 h-6 mb-0.5" />
           <span className="text-[10px] font-medium">Home</span>
         </Link>
-        <Link href="/venues" className={`flex flex-col items-center p-2 ${location.startsWith('/venues') ? 'text-primary' : 'text-muted-foreground'}`}>
-          <MapPin className="w-5 h-5 mb-1" />
+        <Link href="/venues" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location.startsWith('/venues') ? 'text-primary' : 'text-muted-foreground'}`}>
+          <MapPin className="w-6 h-6 mb-0.5" />
           <span className="text-[10px] font-medium">Venues</span>
         </Link>
-        <Link href="/host" className={`flex flex-col items-center p-2 ${location.startsWith('/host') ? 'text-primary' : 'text-muted-foreground'}`}>
-          <div className="bg-primary text-black rounded-full p-2 -mt-6 border-4 border-background">
+        <Link href="/host" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location.startsWith('/host') ? 'text-primary' : 'text-muted-foreground'}`}>
+          <div className="bg-primary text-black rounded-full p-2 -mt-5 border-4 border-background">
             <PlusCircle className="w-6 h-6" />
           </div>
-          <span className="text-[10px] font-medium mt-1">Host</span>
+          <span className="text-[10px] font-medium mt-0.5">Host</span>
         </Link>
-        <Link href="/matches" className={`flex flex-col items-center p-2 ${location.startsWith('/matches') ? 'text-primary' : 'text-muted-foreground'}`}>
-          <Trophy className="w-5 h-5 mb-1" />
+        <Link href="/matches" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location.startsWith('/matches') ? 'text-primary' : 'text-muted-foreground'}`}>
+          <Trophy className="w-6 h-6 mb-0.5" />
           <span className="text-[10px] font-medium">Matches</span>
         </Link>
-        <Link href="/dashboard" className={`flex flex-col items-center p-2 ${location.startsWith('/dashboard') ? 'text-primary' : 'text-muted-foreground'}`}>
-          <Activity className="w-5 h-5 mb-1" />
+        <Link href="/dashboard" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location.startsWith('/dashboard') ? 'text-primary' : 'text-muted-foreground'}`}>
+          <Activity className="w-6 h-6 mb-0.5" />
           <span className="text-[10px] font-medium">Dashboard</span>
         </Link>
       </nav>

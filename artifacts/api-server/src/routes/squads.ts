@@ -18,6 +18,11 @@ import { createAchievementPostForSquadChallengeWin } from "../lib/social-events"
 
 const router: IRouter = Router();
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUUID(id: string): boolean {
+  return UUID_RE.test(id);
+}
+
 function formatSquad(s: typeof squadsTable.$inferSelect, memberCount = 0, isJoined = false) {
   return {
     id: s.id,
@@ -68,6 +73,10 @@ router.get("/squads", async (req, res) => {
 router.get("/squads/:id", async (req, res) => {
   try {
     const squadId = req.params.id as string;
+    if (!isValidUUID(squadId)) {
+      res.status(400).json({ error: "invalid_id", message: "Invalid squad ID format" });
+      return;
+    }
     const [squad] = await db.select().from(squadsTable)
       .where(eq(squadsTable.id, squadId)).limit(1);
     if (!squad) { res.status(404).json({ error: "not_found" }); return; }

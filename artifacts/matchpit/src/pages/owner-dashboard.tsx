@@ -7,9 +7,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { Redirect } from "wouter";
+import { Redirect, useLocation } from "wouter";
 import {
-  Building2, IndianRupee, Calendar, Users, TrendingUp, Clock, ChevronRight
+  Building2, IndianRupee, Calendar, Users, TrendingUp, ChevronRight
 } from "lucide-react";
 
 interface OwnerVenue {
@@ -48,8 +48,15 @@ async function ownerFetch<T>(path: string): Promise<T> {
   return res.json();
 }
 
+/** Format a rupee amount: show ₹XYZ for < 1000, ₹X.Xk for >= 1000 */
+function formatRupees(amount: number): string {
+  if (amount < 1000) return `₹${amount}`;
+  return `₹${(amount / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+}
+
 export default function OwnerDashboard() {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const { data: profile, isLoading: profileLoading } = useGetMyProfile();
 
   const [dashboard, setDashboard] = useState<OwnerDashboard | null>(null);
@@ -99,7 +106,7 @@ export default function OwnerDashboard() {
         <p className="text-muted-foreground mb-8">
           Your account isn't linked to any venue yet. Contact Matchpit admin to get access to your venue dashboard.
         </p>
-        <Button variant="outline" className="font-bold uppercase" onClick={() => window.location.href = "/list-venue"}>
+        <Button variant="outline" className="font-bold uppercase" onClick={() => setLocation("/list-venue")}>
           Register Your Venue <ChevronRight className="w-4 h-4 ml-1" />
         </Button>
       </div>
@@ -138,14 +145,14 @@ export default function OwnerDashboard() {
           <Card className="bg-card/50 border-border/50 text-center">
             <CardContent className="p-4">
               <IndianRupee className="w-5 h-5 text-primary mb-2 mx-auto" />
-              <div className="text-3xl font-extrabold">₹{Math.round(summary.pendingPayoutAmount / 1000)}k</div>
+              <div className="text-3xl font-extrabold">{formatRupees(summary.pendingPayoutAmount)}</div>
               <div className="text-xs uppercase font-bold text-muted-foreground mt-1">Pending Payout</div>
             </CardContent>
           </Card>
           <Card className="bg-card/50 border-border/50 text-center">
             <CardContent className="p-4">
               <TrendingUp className="w-5 h-5 text-primary mb-2 mx-auto" />
-              <div className="text-3xl font-extrabold">₹{Math.round(summary.totalEarnings / 1000)}k</div>
+              <div className="text-3xl font-extrabold">{formatRupees(summary.totalEarnings)}</div>
               <div className="text-xs uppercase font-bold text-muted-foreground mt-1">Total Earned</div>
             </CardContent>
           </Card>
@@ -166,7 +173,7 @@ export default function OwnerDashboard() {
         </TabsList>
 
         <TabsContent value="bookings">
-          <div className="rounded-lg border border-border/50 overflow-hidden bg-card/30">
+          <div className="overflow-x-auto rounded-lg border border-border/50 bg-card/30">
             <Table>
               <TableHeader className="bg-muted/60">
                 <TableRow>
@@ -197,7 +204,7 @@ export default function OwnerDashboard() {
         </TabsContent>
 
         <TabsContent value="matches">
-          <div className="rounded-lg border border-border/50 overflow-hidden bg-card/30">
+          <div className="overflow-x-auto rounded-lg border border-border/50 bg-card/30">
             <Table>
               <TableHeader className="bg-muted/60">
                 <TableRow>
@@ -233,7 +240,7 @@ export default function OwnerDashboard() {
         </TabsContent>
 
         <TabsContent value="payouts">
-          <div className="rounded-lg border border-border/50 overflow-hidden bg-card/30">
+          <div className="overflow-x-auto rounded-lg border border-border/50 bg-card/30">
             <Table>
               <TableHeader className="bg-muted/60">
                 <TableRow>

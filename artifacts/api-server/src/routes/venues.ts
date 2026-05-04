@@ -6,6 +6,11 @@ import { addDays, format, parseISO } from "date-fns";
 
 const router: IRouter = Router();
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUUID(id: string): boolean {
+  return UUID_RE.test(id);
+}
+
 function formatVenue(v: typeof venuesTable.$inferSelect) {
   return {
     id: v.id,
@@ -18,6 +23,7 @@ function formatVenue(v: typeof venuesTable.$inferSelect) {
     rating: Number(v.rating),
     totalReviews: v.totalReviews,
     isApproved: v.isApproved,
+    isFeatured: v.isFeatured,
     amenities: v.amenities ?? [],
   };
 }
@@ -106,6 +112,10 @@ router.get("/venues/sports", async (_req, res) => {
 router.get("/venues/:venueId", async (req, res) => {
   try {
     const venueId = req.params.venueId as string;
+    if (!isValidUUID(venueId)) {
+      res.status(400).json({ error: "invalid_id", message: "Invalid venue ID format" });
+      return;
+    }
     const [venue] = await db
       .select()
       .from(venuesTable)
@@ -127,6 +137,10 @@ router.get("/venues/:venueId", async (req, res) => {
 router.get("/venues/:venueId/slots", async (req, res) => {
   try {
     const venueId = req.params.venueId as string;
+    if (!isValidUUID(venueId)) {
+      res.status(400).json({ error: "invalid_id", message: "Invalid venue ID format" });
+      return;
+    }
     const today = new Date();
     const fromDate = req.query.from
       ? parseISO(req.query.from as string)

@@ -8,6 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatSportLabel } from "@/lib/sport-utils";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -405,8 +406,17 @@ export default function Admin() {
         ) : null}
       </div>
 
-      <Tabs defaultValue="venues">
-        <TabsList className="mb-6 flex-wrap h-auto gap-1">
+      <Tabs
+        defaultValue="venues"
+        onValueChange={(tab) => {
+          // Auto-load data when a new tab is first activated
+          if (tab === "dispatch" && dispatchLogs.length === 0 && !dispatchLogsLoading) loadDispatchLogs();
+          if (tab === "funnels" && !funnels && !funnelsLoading) loadFunnels();
+          if (tab === "kpi" && !kpi && !kpiLoading) loadKpi();
+          if (tab === "moderation" && reports.length === 0 && !reportsLoading) loadReports();
+        }}
+      >
+        <TabsList className="mb-6 flex-wrap md:flex-nowrap overflow-x-auto h-auto gap-1 w-full justify-start">
           <TabsTrigger value="venues" className="font-bold uppercase tracking-wider text-xs">
             Venues {pendingVenues.length > 0 && <Badge className="ml-1 bg-yellow-500 text-black text-[10px]">{pendingVenues.length}</Badge>}
           </TabsTrigger>
@@ -431,6 +441,21 @@ export default function Admin() {
           </TabsTrigger>
           <TabsTrigger value="liveops" className="font-bold uppercase tracking-wider text-xs">
             <Zap className="w-3 h-3 mr-1" /> Live Ops
+          </TabsTrigger>
+          <TabsTrigger value="dispatch" className="font-bold uppercase tracking-wider text-xs" onClick={loadDispatchLogs}>
+            <Bell className="w-3 h-3 mr-1" /> Dispatch
+          </TabsTrigger>
+          <TabsTrigger value="funnels" className="font-bold uppercase tracking-wider text-xs" onClick={loadFunnels}>
+            <Activity className="w-3 h-3 mr-1" /> Funnels
+          </TabsTrigger>
+          <TabsTrigger value="kpi" className="font-bold uppercase tracking-wider text-xs" onClick={loadKpi}>
+            <TrendingUp className="w-3 h-3 mr-1" /> KPI
+          </TabsTrigger>
+          <TabsTrigger value="moderation" className="font-bold uppercase tracking-wider text-xs" onClick={loadReports}>
+            <Flag className="w-3 h-3 mr-1" /> Moderation
+          </TabsTrigger>
+          <TabsTrigger value="seed" className="font-bold uppercase tracking-wider text-xs">
+            <Database className="w-3 h-3 mr-1" /> Seed
           </TabsTrigger>
         </TabsList>
 
@@ -458,7 +483,7 @@ export default function Admin() {
                     <TableCell>
                       <div className="flex gap-1 flex-wrap">
                         {v.sports.slice(0, 2).map((s) => (
-                          <Badge key={s} variant="outline" className="text-[10px] border-border/60">{s}</Badge>
+                          <Badge key={s} variant="outline" className="text-[10px] border-border/60">{formatSportLabel(s)}</Badge>
                         ))}
                         {v.sports.length > 2 && <Badge variant="outline" className="text-[10px]">+{v.sports.length - 2}</Badge>}
                       </div>
@@ -1210,6 +1235,392 @@ export default function Admin() {
                 </Table>
               </div>
             </div>
+          </div>
+        </TabsContent>
+
+        {/* ── Dispatch Logs tab ─────────────────────────────────────────────── */}
+        <TabsContent value="dispatch">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-xl font-bold uppercase italic flex items-center gap-2">
+              <Bell className="w-5 h-5 text-primary" /> Notification Dispatch Logs
+            </h2>
+            <Button size="sm" variant="outline" className="h-7 text-xs font-bold uppercase" onClick={loadDispatchLogs} disabled={dispatchLogsLoading}>
+              <RefreshCw className={`w-3 h-3 mr-1 ${dispatchLogsLoading ? "animate-spin" : ""}`} /> Refresh
+            </Button>
+          </div>
+          <div className="rounded-lg border border-border/50 overflow-hidden bg-card/30">
+            <Table>
+              <TableHeader className="bg-muted/60">
+                <TableRow>
+                  <TableHead>User</TableHead>
+                  <TableHead>Channel</TableHead>
+                  <TableHead>Template</TableHead>
+                  <TableHead>Destination</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Sent At</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {dispatchLogsLoading ? (
+                  <TableRow><TableCell colSpan={6} className="text-center py-8"><Skeleton className="h-8 w-full" /></TableCell></TableRow>
+                ) : dispatchLogs.length === 0 ? (
+                  <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground">No dispatch logs found.</TableCell></TableRow>
+                ) : dispatchLogs.slice(0, 200).map((log: any) => (
+                  <TableRow key={log.id}>
+                    <TableCell className="font-semibold text-sm">{log.userName}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="text-[10px] uppercase font-bold">{log.channel}</Badge>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">{log.templateKey}</TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground max-w-[120px] truncate">{log.destination}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={log.status === "sent" ? "default" : log.status === "failed" ? "destructive" : "secondary"}
+                        className={`text-[10px] uppercase font-bold ${log.status === "sent" ? "bg-primary text-black" : ""}`}
+                      >
+                        {log.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-xs">
+                      {new Date(log.createdAt).toLocaleString("en-IN")}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </TabsContent>
+
+        {/* ── Funnels tab ────────────────────────────────────────────────────── */}
+        <TabsContent value="funnels">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-xl font-bold uppercase italic flex items-center gap-2">
+              <Activity className="w-5 h-5 text-primary" /> Conversion Funnels
+            </h2>
+            <Button size="sm" variant="outline" className="h-7 text-xs font-bold uppercase" onClick={loadFunnels} disabled={funnelsLoading}>
+              <RefreshCw className={`w-3 h-3 mr-1 ${funnelsLoading ? "animate-spin" : ""}`} /> Refresh
+            </Button>
+          </div>
+          {funnelsLoading ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}</div>
+          ) : funnels ? (
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {[
+                  { label: "Signups Today", value: funnels.signupsToday, color: "text-primary" },
+                  { label: "Signups This Week", value: funnels.signupsWeek, color: "text-blue-400" },
+                  { label: "Total Users", value: funnels.totalUsers, color: "text-muted-foreground" },
+                ].map((item) => (
+                  <Card key={item.label} className="bg-card/50 border-border/50 text-center">
+                    <CardContent className="p-4">
+                      <div className={`text-3xl font-extrabold ${item.color}`}>{item.value}</div>
+                      <div className="text-xs uppercase font-bold text-muted-foreground mt-1">{item.label}</div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  { label: "Booking Conversion", started: funnels.bookingStarted, paid: funnels.bookingPaid, pct: funnels.bookingConversion },
+                  { label: "Host Match Conv.", started: funnels.hostStarted, paid: funnels.hostPaid, pct: funnels.hostConversion },
+                  { label: "Reserve Join Conv.", started: funnels.reserveStarted, paid: funnels.reservePaid, pct: funnels.reserveConversion },
+                  { label: "Final Payment Conv.", started: funnels.finalStarted, paid: funnels.finalPaid, pct: funnels.finalConversion },
+                ].map((item) => (
+                  <Card key={item.label} className="bg-card/50 border-border/50">
+                    <CardContent className="p-4">
+                      <div className="text-xs uppercase font-bold text-muted-foreground mb-2">{item.label}</div>
+                      <div className="text-2xl font-extrabold text-primary">{item.pct}%</div>
+                      <div className="text-xs text-muted-foreground mt-1">{item.paid} / {item.started} completed</div>
+                      <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
+                        <div className="h-full bg-primary rounded-full" style={{ width: `${Math.min(item.pct, 100)}%` }} />
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {[
+                  { label: "Wallet Used", value: funnels.walletUsedCount, icon: "💳" },
+                  { label: "Referral Conversions", value: funnels.referralConversions, icon: "🎁" },
+                  { label: "Community Posts", value: funnels.communityPostsCount, icon: "📝" },
+                  { label: "Squads Created", value: funnels.squadCreatedCount, icon: "🏆" },
+                ].map((item) => (
+                  <Card key={item.label} className="bg-card/50 border-border/50 text-center">
+                    <CardContent className="p-4">
+                      <div className="text-2xl mb-1">{item.icon}</div>
+                      <div className="text-2xl font-extrabold">{item.value}</div>
+                      <div className="text-xs uppercase font-bold text-muted-foreground mt-1">{item.label}</div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-16 text-muted-foreground">Click Refresh to load funnel data.</div>
+          )}
+        </TabsContent>
+
+        {/* ── Founder KPI tab ────────────────────────────────────────────────── */}
+        <TabsContent value="kpi">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-xl font-bold uppercase italic flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-primary" /> Founder KPI Dashboard
+            </h2>
+            <Button size="sm" variant="outline" className="h-7 text-xs font-bold uppercase" onClick={loadKpi} disabled={kpiLoading}>
+              <RefreshCw className={`w-3 h-3 mr-1 ${kpiLoading ? "animate-spin" : ""}`} /> Refresh
+            </Button>
+          </div>
+          {kpiLoading ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}</div>
+          ) : kpi ? (
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  { label: "Total GMV", value: `₹${Number(kpi.gmv).toLocaleString("en-IN")}`, color: "text-primary" },
+                  { label: "Wallet Liabilities", value: `₹${Number(kpi.walletLiabilities).toLocaleString("en-IN")}`, color: "text-yellow-400" },
+                  { label: "Unpaid Payouts", value: `₹${Number(kpi.unpaidPayouts).toLocaleString("en-IN")}`, color: "text-red-400" },
+                  { label: "Active Users (7d)", value: kpi.activeUsersWeek, color: "text-blue-400" },
+                  { label: "Matches This Week", value: kpi.matchesCreatedWeek, color: "text-green-400" },
+                  { label: "Reserve Conv.", value: `${kpi.reserveConversion}%`, color: "text-primary" },
+                  { label: "Final Payment Conv.", value: `${kpi.finalPaymentConversion}%`, color: "text-primary" },
+                  { label: "Pending Reports", value: kpi.pendingReportsCount, color: kpi.pendingReportsCount > 0 ? "text-red-400" : "text-muted-foreground" },
+                ].map((item) => (
+                  <Card key={item.label} className="bg-card/50 border-border/50 text-center">
+                    <CardContent className="p-4">
+                      <div className={`text-2xl font-extrabold ${item.color}`}>{item.value}</div>
+                      <div className="text-xs uppercase font-bold text-muted-foreground mt-1">{item.label}</div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <Card className="bg-card/50 border-border/50">
+                  <CardContent className="p-5">
+                    <h3 className="font-bold uppercase text-xs text-muted-foreground mb-3">Top Venues by Bookings</h3>
+                    <div className="space-y-2">
+                      {(kpi.topVenues ?? []).map((v: any, i: number) => (
+                        <div key={i} className="flex justify-between items-center text-sm">
+                          <span className="font-semibold truncate max-w-[160px]">{v.name}</span>
+                          <Badge variant="outline" className="font-mono text-xs">{v.bookings}</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card className="bg-card/50 border-border/50">
+                  <CardContent className="p-5">
+                    <h3 className="font-bold uppercase text-xs text-muted-foreground mb-3">Top Hosts by Matches</h3>
+                    <div className="space-y-2">
+                      {(kpi.topHosts ?? []).map((h: any, i: number) => (
+                        <div key={i} className="flex justify-between items-center text-sm">
+                          <span className="font-semibold truncate max-w-[160px]">{h.full_name}</span>
+                          <Badge variant="outline" className="font-mono text-xs">{h.matches}</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card className="bg-card/50 border-border/50">
+                  <CardContent className="p-5">
+                    <h3 className="font-bold uppercase text-xs text-muted-foreground mb-3">Top Referrers</h3>
+                    <div className="space-y-2">
+                      {(kpi.topReferrers ?? []).map((r: any, i: number) => (
+                        <div key={i} className="flex justify-between items-center text-sm">
+                          <span className="font-semibold truncate max-w-[120px]">{r.full_name}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs text-muted-foreground">{r.referral_code}</span>
+                            <Badge variant="outline" className="font-mono text-xs">{r.referred}</Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-16 text-muted-foreground">Click Refresh to load KPI data.</div>
+          )}
+        </TabsContent>
+
+        {/* ── Moderation tab ─────────────────────────────────────────────────── */}
+        <TabsContent value="moderation">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-xl font-bold uppercase italic flex items-center gap-2">
+              <Shield className="w-5 h-5 text-primary" /> Moderation
+            </h2>
+            <Button size="sm" variant="outline" className="h-7 text-xs font-bold uppercase" onClick={loadReports} disabled={reportsLoading}>
+              <RefreshCw className={`w-3 h-3 mr-1 ${reportsLoading ? "animate-spin" : ""}`} /> Refresh
+            </Button>
+          </div>
+          <div className="space-y-8">
+            {/* Reports Queue */}
+            <div>
+              <h3 className="text-sm font-bold uppercase text-muted-foreground mb-3 flex items-center gap-2">
+                <Flag className="w-4 h-4" /> Reports Queue
+              </h3>
+              <div className="rounded-lg border border-border/50 overflow-hidden bg-card/30">
+                <Table>
+                  <TableHeader className="bg-muted/60">
+                    <TableRow>
+                      <TableHead>Reporter</TableHead>
+                      <TableHead>Target Type</TableHead>
+                      <TableHead>Reason</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Submitted</TableHead>
+                      <TableHead>Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {reportsLoading ? (
+                      <TableRow><TableCell colSpan={6} className="text-center py-8"><Skeleton className="h-8 w-full" /></TableCell></TableRow>
+                    ) : reports.length === 0 ? (
+                      <TableRow><TableCell colSpan={6} className="text-center py-12 text-muted-foreground">No reports yet.</TableCell></TableRow>
+                    ) : reports.map((r: any) => (
+                      <TableRow key={r.id} className={r.status === "pending" ? "bg-yellow-500/5" : ""}>
+                        <TableCell className="font-semibold text-sm">{r.reporterName}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-[10px] uppercase">{r.targetType}</Badge>
+                        </TableCell>
+                        <TableCell className="text-sm max-w-[200px] truncate text-muted-foreground">{r.reason}</TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={r.status === "pending" ? "secondary" : r.status === "actioned" ? "destructive" : "default"}
+                            className="text-[10px] uppercase font-bold"
+                          >
+                            {r.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {new Date(r.createdAt).toLocaleDateString("en-IN")}
+                        </TableCell>
+                        <TableCell>
+                          <Select value={r.status} onValueChange={(v) => handleUpdateReport(r.id, v)}>
+                            <SelectTrigger className="h-7 w-32 text-xs font-bold uppercase">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="pending">Pending</SelectItem>
+                              <SelectItem value="reviewed">Reviewed</SelectItem>
+                              <SelectItem value="dismissed">Dismissed</SelectItem>
+                              <SelectItem value="actioned">Actioned</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+
+            {/* Suspend User */}
+            <div>
+              <h3 className="text-sm font-bold uppercase text-muted-foreground mb-3 flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4" /> Quick Suspend / Unsuspend
+              </h3>
+              <Card className="bg-card/50 border-border/50 max-w-md">
+                <CardContent className="p-5 space-y-3">
+                  <Input
+                    placeholder="User ID (UUID)"
+                    value={liveOpsUserId}
+                    onChange={(e) => setLiveOpsUserId(e.target.value)}
+                    className="h-9 font-mono text-xs"
+                  />
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="destructive" className="flex-1 font-bold uppercase"
+                      disabled={!liveOpsUserId}
+                      onClick={() => handleSuspendUser(liveOpsUserId, true)}>
+                      Suspend
+                    </Button>
+                    <Button size="sm" variant="outline" className="flex-1 font-bold uppercase"
+                      disabled={!liveOpsUserId}
+                      onClick={() => handleSuspendUser(liveOpsUserId, false)}>
+                      Unsuspend
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* ── Seed tab ───────────────────────────────────────────────────────── */}
+        <TabsContent value="seed">
+          <div className="mb-4">
+            <h2 className="text-xl font-bold uppercase italic flex items-center gap-2">
+              <Database className="w-5 h-5 text-primary" /> Demo Data Seeder
+            </h2>
+            <p className="text-sm text-muted-foreground mt-1">Populate the platform with realistic Jaipur demo data for testing and demos.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-3xl">
+            {[
+              { label: "Seed Demo Profiles", desc: "40 realistic Jaipur players with sports, areas, skill levels", endpoint: "/admin/seed/demo-profiles", icon: "👤" },
+              { label: "Seed Demo Community", desc: "30 community posts across sports and areas", endpoint: "/admin/seed/demo-community", icon: "📝" },
+              { label: "Seed Demo Squads", desc: "10 squads with captains and members", endpoint: "/admin/seed/demo-squads", icon: "🏆" },
+              { label: "Seed Demo Hosted Matches", desc: "15 matches across statuses (needs profiles + venues)", endpoint: "/admin/seed/demo-hosted-matches", icon: "⚽" },
+              { label: "Seed Demo Notifications", desc: "20 notifications across demo profiles", endpoint: "/admin/seed/demo-notifications", icon: "🔔" },
+              { label: "Seed Demo Challenges", desc: "5 squad challenges (needs squads)", endpoint: "/admin/seed/demo-challenges", icon: "⚔️" },
+            ].map((item) => (
+              <Card key={item.endpoint} className="bg-card/50 border-border/50">
+                <CardContent className="p-5">
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">{item.icon}</span>
+                    <div className="flex-1">
+                      <h3 className="font-bold uppercase text-sm">{item.label}</h3>
+                      <p className="text-xs text-muted-foreground mt-0.5 mb-3">{item.desc}</p>
+                      <Button
+                        size="sm"
+                        className="font-bold uppercase w-full"
+                        disabled={seedRunning}
+                        onClick={async () => {
+                          setSeedRunning(true);
+                          try {
+                            const data = await adminFetch<any>(item.endpoint, { method: "POST" });
+                            toast({ title: data.message ?? "Seeded successfully" });
+                          } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
+                          finally { setSeedRunning(false); }
+                        }}
+                      >
+                        {seedRunning ? "Running..." : `Run ${item.label.replace("Seed ", "")}`}
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          <div className="mt-6 max-w-3xl">
+            <Card className="bg-primary/5 border-primary/20">
+              <CardContent className="p-5">
+                <div className="flex items-center gap-3 mb-3">
+                  <Sprout className="w-5 h-5 text-primary" />
+                  <h3 className="font-bold uppercase text-sm">Seed Full Ecosystem</h3>
+                </div>
+                <p className="text-xs text-muted-foreground mb-4">
+                  Runs all seed steps in order: profiles → community → squads → matches → notifications → challenges.
+                  Requires at least one approved venue to exist.
+                </p>
+                <Button
+                  className="font-bold uppercase w-full"
+                  disabled={seedRunning}
+                  onClick={handleRunSeedAll}
+                >
+                  {seedRunning ? "Seeding Full Ecosystem..." : "🌱 Seed Full Ecosystem"}
+                </Button>
+                {seedResults && (
+                  <div className="mt-4 space-y-1">
+                    {Object.entries(seedResults).map(([key, val]: [string, any]) => (
+                      <div key={key} className="flex justify-between text-xs">
+                        <span className="font-mono text-muted-foreground capitalize">{key}</span>
+                        <span className="font-semibold">{val?.message ?? JSON.stringify(val)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
         </TabsContent>
 

@@ -11,6 +11,7 @@ import { useUser } from "@clerk/react";
 import { useGetMyProfile } from "@workspace/api-client-react";
 import { Shield, Trophy, Users, Swords, Send, Star, Crown } from "lucide-react";
 import { formatDistanceToNow, parseISO } from "date-fns";
+import { formatSportLabel } from "@/lib/sport-utils";
 
 async function apiFetch(path: string, opts?: RequestInit) {
   const res = await fetch(`/api${path}`, {
@@ -106,7 +107,7 @@ export default function SquadDetailPage() {
                 {isCaptain && <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px]"><Crown className="w-3 h-3 mr-1" />Captain</Badge>}
               </div>
               <div className="flex items-center gap-2 mt-1">
-                <Badge variant="secondary" className="text-[10px] uppercase font-bold">{squad.sport.replace("_", " ")}</Badge>
+                <Badge variant="secondary" className="text-[10px] uppercase font-bold">{formatSportLabel(squad.sport)}</Badge>
                 <span className="text-xs text-muted-foreground">Jaipur</span>
               </div>
             </div>

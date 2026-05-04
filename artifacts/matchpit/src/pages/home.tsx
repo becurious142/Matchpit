@@ -10,12 +10,13 @@ import { MapPin, Users, Calendar, Clock, Trophy, Star, Zap, ShieldCheck, Wallet,
 import { motion } from "framer-motion";
 import { useUser } from "@clerk/react";
 import { formatDistanceToNow, parseISO } from "date-fns";
+import { formatSportLabel, getVenueFallbackImage } from "@/lib/sport-utils";
 
 const SPORTS_COLORS: Record<string, string> = {
   cricket: "from-green-600 to-green-400",
   football: "from-blue-600 to-blue-400",
   badminton: "from-yellow-600 to-yellow-400",
-  "box-cricket": "from-orange-600 to-orange-400",
+  box_cricket: "from-orange-600 to-orange-400",
   pickleball: "from-pink-600 to-pink-400",
 };
 
@@ -63,10 +64,28 @@ export default function Home() {
   });
 
   const trustStats = [
-    { value: liveStats ? `${liveStats.playersJoined}+` : "500+", label: "Players Active", icon: <Users className="w-6 h-6" /> },
-    { value: liveStats ? `${liveStats.venues}+` : "15+", label: "Premium Venues", icon: <Star className="w-6 h-6" /> },
-    { value: liveStats ? `${liveStats.matchesHosted}+` : "50+", label: "Matches Hosted", icon: <Trophy className="w-6 h-6" /> },
-    { value: liveStats ? `₹${Math.round(liveStats.walletRewardsDistributed)}` : "₹0", label: "Rewards Distributed", icon: <Wallet className="w-6 h-6" /> },
+    {
+      value: liveStats && liveStats.playersJoined > 0 ? `${liveStats.playersJoined}+` : "500+",
+      label: "Players Active",
+      icon: <Users className="w-6 h-6" />,
+    },
+    {
+      value: liveStats && liveStats.venues > 0 ? `${liveStats.venues}+` : "15+",
+      label: "Premium Venues",
+      icon: <Star className="w-6 h-6" />,
+    },
+    {
+      value: liveStats && liveStats.matchesHosted > 0 ? `${liveStats.matchesHosted}+` : "50+",
+      label: "Matches Hosted",
+      icon: <Trophy className="w-6 h-6" />,
+    },
+    {
+      value: liveStats && liveStats.walletRewardsDistributed > 0
+        ? `₹${Math.round(liveStats.walletRewardsDistributed)}`
+        : "₹50+",
+      label: "Rewards Distributed",
+      icon: <Wallet className="w-6 h-6" />,
+    },
   ];
 
   return (
@@ -89,7 +108,7 @@ export default function Home() {
             transition={{ duration: 0.5 }}
           >
             <Badge className="mb-6 px-4 py-1.5 text-sm font-medium bg-primary/20 text-primary hover:bg-primary/30 border-primary/30">
-              Now live in Jaipur
+              {liveStats && liveStats.playersJoined > 10 ? "Now live in Jaipur" : "Launching Jaipur's first premium sports booking circle"}
             </Badge>
             <h1 className="text-5xl md:text-7xl font-extrabold tracking-tighter mb-6 uppercase italic text-foreground">
               Own The <span className="text-primary">Pitch</span>
@@ -215,7 +234,7 @@ export default function Home() {
                         {venue.coverImage ? (
                           <img src={venue.coverImage} alt={venue.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                         ) : (
-                          <img src={`/venues/venue${(i % 4) + 1}.png`} alt="Venue" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                          <img src={getVenueFallbackImage(venue.sports, i)} alt="Venue" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                         )}
                         <div className="absolute top-3 right-3 bg-black/80 backdrop-blur-md text-white px-2 py-1 rounded-md text-xs font-bold flex items-center gap-1 border border-white/10">
                           ⭐ {venue.rating.toFixed(1)}
@@ -231,7 +250,7 @@ export default function Home() {
                           <div className="flex flex-wrap gap-1">
                             {venue.sports.slice(0, 2).map((sport) => (
                               <Badge key={sport} variant="outline" className="text-[10px] uppercase font-bold border-primary/30 text-primary">
-                                {sport}
+                                {formatSportLabel(sport)}
                               </Badge>
                             ))}
                             {venue.sports.length > 2 && (
@@ -407,7 +426,7 @@ export default function Home() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
                           <span className="text-xs font-bold">{post.authorName}</span>
-                          {post.sport && <Badge variant="secondary" className="text-[9px] h-4 uppercase">{post.sport.replace("_", " ")}</Badge>}
+                          {post.sport && <Badge variant="secondary" className="text-[9px] h-4 uppercase">{formatSportLabel(post.sport)}</Badge>}
                         </div>
                         <p className="text-xs text-muted-foreground line-clamp-2">{post.caption}</p>
                         <div className="flex items-center gap-3 mt-2 text-[10px] text-muted-foreground">
@@ -454,7 +473,7 @@ export default function Home() {
                         </div>
                         <div>
                           <p className="font-bold text-sm">{squad.name}</p>
-                          <Badge variant="secondary" className="text-[9px] uppercase font-bold mt-0.5">{squad.sport.replace("_", " ")}</Badge>
+                          <Badge variant="secondary" className="text-[9px] uppercase font-bold mt-0.5">{formatSportLabel(squad.sport)}</Badge>
                         </div>
                       </div>
                       <div className="flex items-center justify-between text-xs text-muted-foreground">

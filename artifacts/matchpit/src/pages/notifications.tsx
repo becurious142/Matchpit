@@ -37,10 +37,10 @@ const NOTIF_META: Record<string, { icon: React.ReactNode; color: string; label: 
     label: "Payment Due",
     cta: (refId) => ({ label: "Pay Now", href: refId ? `/matches/${refId}` : "/dashboard/matches" }),
   },
-  final_payment_overdue: {
+  final_payment_pending: {
     icon: <AlertCircle className="w-5 h-5" />,
-    color: "text-red-400 bg-red-500/10",
-    label: "Overdue",
+    color: "text-orange-400 bg-orange-500/10",
+    label: "Payment Pending",
     cta: (refId) => ({ label: "Pay Now", href: refId ? `/matches/${refId}` : "/dashboard/matches" }),
   },
   booking_reminder: {

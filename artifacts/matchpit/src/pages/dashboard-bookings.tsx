@@ -2,10 +2,12 @@ import { useListMyBookings, ListMyBookingsStatus } from "@workspace/api-client-r
 import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Calendar, Clock, MapPin } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { Link } from "wouter";
 
 export default function DashboardBookings() {
   const [status, setStatus] = useState<ListMyBookingsStatus | undefined>(undefined);
@@ -56,8 +58,13 @@ export default function DashboardBookings() {
             </Card>
           ))
         ) : (
-          <div className="text-center py-12 text-muted-foreground bg-card/30 rounded-xl border border-dashed">
-            No bookings found.
+          <div className="text-center py-16 text-muted-foreground bg-card/30 rounded-xl border border-dashed">
+            <Calendar className="w-12 h-12 mx-auto mb-4 opacity-30" />
+            <p className="font-bold text-lg mb-1">No bookings found.</p>
+            <p className="text-sm mb-6">Book a turf to see your reservations here.</p>
+            <Link href="/venues">
+              <Button className="font-bold uppercase italic" size="sm">Book a Venue</Button>
+            </Link>
           </div>
         )}
       </div>

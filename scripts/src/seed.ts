@@ -5,6 +5,7 @@ import {
   citiesTable,
   ownerLeadsTable,
 } from "@workspace/db";
+import { and, eq } from "drizzle-orm";
 import { addDays, format } from "date-fns";
 
 const JAIPUR_VENUES = [
@@ -16,7 +17,8 @@ const JAIPUR_VENUES = [
     openTime: "06:00",
     closeTime: "23:00",
     amenities: ["Floodlights", "Changing Rooms", "Parking", "Water"],
-    description: "Premium multi-sport turf in the heart of Malviya Nagar with professional-grade synthetic grass.",
+    description: "Premium multi-sport turf in the heart of Malviya Nagar with professional-grade synthetic grass. Perfect for 5-a-side and 7-a-side football, cricket nets, and badminton courts.",
+    coverImage: "https://images.unsplash.com/photo-1529900748604-07564a03e7a6?w=800&q=80",
     rating: "4.7",
     totalReviews: 52,
     isFeatured: true,
@@ -30,7 +32,8 @@ const JAIPUR_VENUES = [
     openTime: "05:30",
     closeTime: "22:00",
     amenities: ["Floodlights", "Parking", "Cafeteria"],
-    description: "Spacious sports complex with dedicated pickleball courts — the first of its kind in Jaipur.",
+    description: "Spacious sports complex with dedicated pickleball courts — the first of its kind in Jaipur. Wide open football ground with FIFA-grade turf.",
+    coverImage: "https://images.unsplash.com/photo-1551958219-acbc595d9e47?w=800&q=80",
     rating: "4.6",
     totalReviews: 38,
     isFeatured: true,
@@ -44,7 +47,8 @@ const JAIPUR_VENUES = [
     openTime: "06:00",
     closeTime: "23:00",
     amenities: ["Floodlights", "Practice Nets", "Changing Rooms", "Parking"],
-    description: "Full-size cricket ground and dedicated box cricket cages. Ideal for serious batsmen.",
+    description: "Full-size cricket ground and dedicated box cricket cages. Ideal for serious batsmen and weekend warriors alike. Electronic scoreboard included.",
+    coverImage: "https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=800&q=80",
     rating: "4.8",
     totalReviews: 94,
     isFeatured: true,
@@ -58,7 +62,8 @@ const JAIPUR_VENUES = [
     openTime: "06:00",
     closeTime: "22:30",
     amenities: ["Floodlights", "Parking", "Water"],
-    description: "FIFA-grade synthetic turf perfect for 5-a-side and 7-a-side football matches.",
+    description: "FIFA-grade synthetic turf perfect for 5-a-side and 7-a-side football matches. Covered badminton courts available on-site.",
+    coverImage: "https://images.unsplash.com/photo-1574629810360-7efbbe195018?w=800&q=80",
     rating: "4.5",
     totalReviews: 67,
     isFeatured: false,
@@ -72,7 +77,8 @@ const JAIPUR_VENUES = [
     openTime: "06:00",
     closeTime: "22:00",
     amenities: ["Air Conditioning", "Changing Rooms", "Coaching Available"],
-    description: "Professional indoor badminton facility with 6 courts and certified coaches.",
+    description: "Professional indoor badminton facility with 6 courts and certified coaches. Air-conditioned halls ensure year-round comfort.",
+    coverImage: "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?w=800&q=80",
     rating: "4.9",
     totalReviews: 121,
     isFeatured: true,
@@ -86,7 +92,8 @@ const JAIPUR_VENUES = [
     openTime: "05:00",
     closeTime: "23:30",
     amenities: ["Floodlights", "Parking", "Cafeteria", "Changing Rooms", "CCTV"],
-    description: "Jaipur's biggest multi-sport complex. Three simultaneous games possible.",
+    description: "Jaipur's biggest multi-sport complex. Three simultaneous games possible. Cafeteria on-site for post-match refreshments.",
+    coverImage: "https://images.unsplash.com/photo-1459865264687-595d652de67e?w=800&q=80",
     rating: "4.7",
     totalReviews: 203,
     isFeatured: true,
@@ -100,7 +107,8 @@ const JAIPUR_VENUES = [
     openTime: "06:00",
     closeTime: "22:00",
     amenities: ["Floodlights", "Parking", "Water"],
-    description: "Well-maintained turf arena with wide open space — great for full-squad matches.",
+    description: "Well-maintained turf arena with wide open space — great for full-squad matches. New courts added recently.",
+    coverImage: "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=800&q=80",
     rating: "4.4",
     totalReviews: 44,
     isFeatured: false,
@@ -114,7 +122,8 @@ const JAIPUR_VENUES = [
     openTime: "06:00",
     closeTime: "21:00",
     amenities: ["Air Conditioning", "Equipment Rental", "Coaching"],
-    description: "Jaipur's first dedicated pickleball facility — courts built to international standards.",
+    description: "Jaipur's first dedicated pickleball facility — courts built to international standards. Equipment rental available for beginners.",
+    coverImage: "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?w=800&q=80",
     rating: "4.8",
     totalReviews: 29,
     isFeatured: false,
@@ -128,7 +137,8 @@ const JAIPUR_VENUES = [
     openTime: "07:00",
     closeTime: "22:00",
     amenities: ["Floodlights", "Scoreboard", "Changing Rooms", "Parking"],
-    description: "4 premium box cricket cages with electronic scoreboards. Book by the over or by the hour.",
+    description: "4 premium box cricket cages with electronic scoreboards. Book by the over or by the hour. Perfect for corporate events.",
+    coverImage: "https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=800&q=80",
     rating: "4.6",
     totalReviews: 57,
     isFeatured: false,
@@ -142,7 +152,8 @@ const JAIPUR_VENUES = [
     openTime: "05:30",
     closeTime: "22:30",
     amenities: ["Floodlights", "Parking", "First Aid Kit"],
-    description: "Dedicated 7-a-side and 11-a-side football ground with high-quality turf.",
+    description: "Dedicated 7-a-side and 11-a-side football ground with high-quality turf. First aid kit on-site for safety.",
+    coverImage: "https://images.unsplash.com/photo-1574629810360-7efbbe195018?w=800&q=80",
     rating: "4.5",
     totalReviews: 76,
     isFeatured: false,
@@ -156,7 +167,8 @@ const JAIPUR_VENUES = [
     openTime: "06:00",
     closeTime: "21:00",
     amenities: ["Air Conditioning", "Coaching", "Equipment Rental", "Changing Rooms"],
-    description: "State-certified badminton academy open to casual players and competitive trainees.",
+    description: "State-certified badminton academy open to casual players and competitive trainees. Certified coaches available on request.",
+    coverImage: "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?w=800&q=80",
     rating: "4.7",
     totalReviews: 88,
     isFeatured: false,
@@ -170,7 +182,8 @@ const JAIPUR_VENUES = [
     openTime: "06:00",
     closeTime: "23:00",
     amenities: ["Floodlights", "Nets", "Pavilion", "Parking"],
-    description: "Heritage-area cricket ground with lush outfield and dedicated box cricket nets.",
+    description: "Heritage-area cricket ground with lush outfield and dedicated box cricket nets. Pavilion seating for spectators.",
+    coverImage: "https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=800&q=80",
     rating: "4.6",
     totalReviews: 112,
     isFeatured: false,
@@ -184,7 +197,8 @@ const JAIPUR_VENUES = [
     openTime: "06:00",
     closeTime: "23:00",
     amenities: ["Floodlights", "Parking", "CCTV", "Cafeteria"],
-    description: "Premium 5-a-side football arena with adjacent pickleball court.",
+    description: "Premium 5-a-side football arena with adjacent pickleball court. CCTV monitored for safety.",
+    coverImage: "https://images.unsplash.com/photo-1529900748604-07564a03e7a6?w=800&q=80",
     rating: "4.5",
     totalReviews: 63,
     isFeatured: false,
@@ -198,7 +212,8 @@ const JAIPUR_VENUES = [
     openTime: "06:00",
     closeTime: "22:00",
     amenities: ["Floodlights", "Changing Rooms", "Parking", "Water", "Cafeteria"],
-    description: "All-in-one sports hub on Tonk Road — football, badminton hall, and cricket practice nets.",
+    description: "All-in-one sports hub on Tonk Road — football, badminton hall, and cricket practice nets under one roof.",
+    coverImage: "https://images.unsplash.com/photo-1459865264687-595d652de67e?w=800&q=80",
     rating: "4.6",
     totalReviews: 48,
     isFeatured: false,
@@ -212,7 +227,8 @@ const JAIPUR_VENUES = [
     openTime: "06:00",
     closeTime: "22:00",
     amenities: ["Floodlights", "Parking", "Changing Rooms"],
-    description: "Large open complex near Sitapura with maintained turf and friendly pricing.",
+    description: "Large open complex near Sitapura with maintained turf and friendly pricing. Great for corporate tournaments.",
+    coverImage: "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=800&q=80",
     rating: "4.3",
     totalReviews: 35,
     isFeatured: false,
@@ -294,6 +310,14 @@ async function main() {
   console.log("🏟️  Seeding 15 Jaipur venues...");
   const insertedVenues = [];
   for (const v of JAIPUR_VENUES) {
+    // Pre-check: skip if a venue with the same name already exists in Jaipur
+    const existing = await db
+      .select({ id: venuesTable.id })
+      .from(venuesTable)
+      .where(and(eq(venuesTable.name, v.name), eq(venuesTable.city, "Jaipur")))
+      .limit(1);
+    if (existing.length > 0) continue;
+
     const [inserted] = await db
       .insert(venuesTable)
       .values({
@@ -301,7 +325,6 @@ async function main() {
         city: "Jaipur",
         cityId: jaipurRecord?.id ?? null,
       })
-      .onConflictDoNothing()
       .returning();
     if (inserted) insertedVenues.push(inserted);
   }

@@ -96,7 +96,7 @@ export default function Dashboard() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-8">
         <Card className="bg-card/50 border-border/50">
           <CardContent className="p-4 flex flex-col justify-center items-center text-center">
             <Calendar className="w-5 h-5 text-primary mb-2" />

@@ -79,7 +79,7 @@ router.get("/admin/kpi", requireAdmin, async (req, res) => {
     const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - 7);
 
     const [gmvRow] = await db.select({ total: sum(paymentsTable.amount) })
-      .from(paymentsTable).where(eq(paymentsTable.status, "completed"));
+      .from(paymentsTable).where(eq(paymentsTable.status, "success"));
 
     const [walletLiabilityRow] = await db.select({ total: sum(profilesTable.walletBalance) })
       .from(profilesTable);

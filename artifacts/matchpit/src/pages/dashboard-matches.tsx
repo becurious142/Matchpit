@@ -1,6 +1,7 @@
 import { useListMyHostedMatches, useListJoinedMatches } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Calendar, Clock, Trophy, Users } from "lucide-react";
@@ -64,8 +65,13 @@ export default function DashboardMatches() {
               );
             })
           ) : (
-            <div className="text-center py-12 text-muted-foreground bg-card/30 rounded-xl border border-dashed">
-              You haven't joined any matches yet.
+            <div className="text-center py-16 text-muted-foreground bg-card/30 rounded-xl border border-dashed">
+              <Trophy className="w-12 h-12 mx-auto mb-4 opacity-30" />
+              <p className="font-bold text-lg mb-1">No joined matches yet.</p>
+              <p className="text-sm mb-6">Find an open match and reserve your spot.</p>
+              <Link href="/matches">
+                <Button className="font-bold uppercase italic" size="sm">Browse Matches</Button>
+              </Link>
             </div>
           )}
         </TabsContent>
@@ -108,8 +114,13 @@ export default function DashboardMatches() {
               </Card>
             ))
           ) : (
-            <div className="text-center py-12 text-muted-foreground bg-card/30 rounded-xl border border-dashed">
-              You haven't hosted any matches yet.
+            <div className="text-center py-16 text-muted-foreground bg-card/30 rounded-xl border border-dashed">
+              <Users className="w-12 h-12 mx-auto mb-4 opacity-30" />
+              <p className="font-bold text-lg mb-1">No hosted matches yet.</p>
+              <p className="text-sm mb-6">Host your first match and fill it with players.</p>
+              <Link href="/host">
+                <Button className="font-bold uppercase italic" size="sm">Host a Match</Button>
+              </Link>
             </div>
           )}
         </TabsContent>

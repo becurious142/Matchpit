@@ -12,6 +12,7 @@ import { useUser } from "@clerk/react";
 import { useGetMyProfile } from "@workspace/api-client-react";
 import { Heart, MessageCircle, Share2, Plus, Users, Trophy, Star, Flame, Image as ImageIcon, ChevronDown } from "lucide-react";
 import { formatDistanceToNow, parseISO } from "date-fns";
+import { formatSportLabel } from "@/lib/sport-utils";
 
 const POST_TYPES = [
   { value: "text", label: "Update", icon: "💬" },
@@ -205,7 +206,7 @@ export default function CommunityPage() {
               sportFilter === s ? "bg-primary text-black" : "bg-muted text-muted-foreground hover:text-foreground"
             }`}
           >
-            {s === "all" ? "All Sports" : s.replace("_", " ")}
+            {s === "all" ? "All Sports" : formatSportLabel(s)}
           </button>
         ))}
       </div>
@@ -291,7 +292,7 @@ function PostCard({ post, isLiked, onLike }: { post: Post; isLiked: boolean; onL
               )}
               {post.sport && (
                 <Badge variant="secondary" className="text-[9px] h-4 px-1.5 uppercase font-bold">
-                  {post.sport.replace("_", " ")}
+                  {formatSportLabel(post.sport)}
                 </Badge>
               )}
             </div>
@@ -344,7 +345,20 @@ function PostCard({ post, isLiked, onLike }: { post: Post; isLiked: boolean; onL
             <MessageCircle className="w-4 h-4" />
             {post.commentsCount}
           </button>
-          <button className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors ml-auto">
+          <button
+            className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors ml-auto"
+            onClick={async () => {
+              const url = `${window.location.origin}/community#${post.id}`;
+              if (navigator.share) {
+                try {
+                  await navigator.share({ title: "MATCHPIT Post", text: post.caption, url });
+                } catch { /* user cancelled */ }
+              } else {
+                await navigator.clipboard.writeText(url);
+                toast({ title: "Post link copied!" });
+              }
+            }}
+          >
             <Share2 className="w-4 h-4" />
             Share
           </button>

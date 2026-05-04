@@ -4,6 +4,7 @@ import { db } from "@workspace/db";
 import {
   paymentsTable,
   hostedMatchParticipantsTable,
+  hostedMatchesTable,
   bookingsTable,
   profilesTable,
 } from "@workspace/db";
@@ -21,10 +22,14 @@ router.post("/payments/webhook", async (req, res) => {
     const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
     if (webhookSecret) {
       const signature = req.headers["x-razorpay-signature"] as string;
-      const body = JSON.stringify(req.body);
+      // req.body is a raw Buffer when express.raw() is used (production).
+      // Fall back to JSON.stringify for dev mode where express.json() runs first.
+      const rawBody: string = Buffer.isBuffer(req.body)
+        ? req.body.toString("utf8")
+        : JSON.stringify(req.body);
       const expected = crypto
         .createHmac("sha256", webhookSecret)
-        .update(body)
+        .update(rawBody)
         .digest("hex");
       if (signature !== expected) {
         res.status(400).json({ error: "invalid_signature" });
@@ -32,7 +37,12 @@ router.post("/payments/webhook", async (req, res) => {
       }
     }
 
-    const { event, payload: rzpPayload } = req.body;
+    // Parse body — may be raw Buffer or already-parsed object
+    const parsed: Record<string, unknown> = Buffer.isBuffer(req.body)
+      ? JSON.parse(req.body.toString("utf8"))
+      : req.body;
+
+    const { event, payload: rzpPayload } = parsed as { event: string; payload: any };
     const razorpayPaymentId = rzpPayload?.payment?.entity?.id;
     const razorpayOrderId = rzpPayload?.payment?.entity?.order_id;
 
@@ -53,7 +63,7 @@ router.post("/payments/webhook", async (req, res) => {
     }
 
     // Idempotency — already completed, skip
-    if (payment.status === "completed") {
+    if (payment.status === "success") {
       res.json({ ok: true, idempotent: true });
       return;
     }
@@ -62,48 +72,78 @@ router.post("/payments/webhook", async (req, res) => {
       await db
         .update(paymentsTable)
         .set({
-          status: "completed",
+          status: "success",
           razorpayPaymentId: razorpayPaymentId ?? null,
         })
         .where(eq(paymentsTable.id, payment.id));
 
-      setImmediate(async () => {
-        try {
-          if (payment.type === "booking") {
-            await generateBookingPayout(payment.referenceId!, payment.amount);
-            await processFirstBookingCashback(payment.userId);
-            await processReferralRewards(payment.userId, payment.type);
-          } else if (payment.type === "host_commitment") {
-            await generateMatchPayout(payment.referenceId!, payment.amount);
-            await processFirstMatchCashback(payment.userId);
-            await processReferralRewards(payment.userId, payment.type);
-          } else if (payment.type === "match_reserve") {
-            // Participant already reserved
-          } else if (payment.type === "match_final") {
-            if (payment.referenceId) {
-              const [participant] = await db
-                .select()
-                .from(hostedMatchParticipantsTable)
-                .where(
-                  and(
-                    eq(hostedMatchParticipantsTable.matchId, payment.referenceId),
-                    eq(hostedMatchParticipantsTable.userId, payment.userId)
-                  )
-                )
-                .limit(1);
-              if (participant && participant.status !== "final_paid") {
-                await db
-                  .update(hostedMatchParticipantsTable)
-                  .set({ status: "final_paid" })
-                  .where(eq(hostedMatchParticipantsTable.id, participant.id));
-                await generateMatchPayout(payment.referenceId, payment.amount);
-              }
+      // C1: Post-payment commerce awaited before responding to Razorpay.
+      // Razorpay expects a 200 within ~5s; all steps are fast DB writes.
+      // Each block is individually try/caught so one failure doesn't abort others.
+      try {
+        if (payment.type === "booking" && payment.referenceId) {
+          const [booking] = await db
+            .select({ venueId: bookingsTable.venueId })
+            .from(bookingsTable)
+            .where(eq(bookingsTable.id, payment.referenceId))
+            .limit(1);
+          if (booking) {
+            await generateBookingPayout(booking.venueId, payment.referenceId, Number(payment.amount));
+          }
+          await processFirstBookingCashback(payment.userId, payment.referenceId);
+          await processReferralRewards(payment.userId);
+        }
+      } catch (err) {
+        logger.error({ err, paymentId: payment.id }, "Webhook booking post-payment error");
+      }
+
+      try {
+        if (payment.type === "host_commitment" && payment.referenceId) {
+          const [match] = await db
+            .select({ venueId: hostedMatchesTable.venueId })
+            .from(hostedMatchesTable)
+            .where(eq(hostedMatchesTable.id, payment.referenceId))
+            .limit(1);
+          if (match) {
+            await generateMatchPayout(match.venueId, payment.referenceId, Number(payment.amount));
+          }
+          await processFirstMatchCashback(payment.userId, payment.referenceId);
+          await processReferralRewards(payment.userId);
+        }
+      } catch (err) {
+        logger.error({ err, paymentId: payment.id }, "Webhook host_commitment post-payment error");
+      }
+
+      try {
+        if (payment.type === "match_final" && payment.referenceId) {
+          const [participant] = await db
+            .select()
+            .from(hostedMatchParticipantsTable)
+            .where(
+              and(
+                eq(hostedMatchParticipantsTable.matchId, payment.referenceId),
+                eq(hostedMatchParticipantsTable.userId, payment.userId),
+              ),
+            )
+            .limit(1);
+          if (participant && participant.status !== "final_paid") {
+            await db
+              .update(hostedMatchParticipantsTable)
+              .set({ status: "final_paid" })
+              .where(eq(hostedMatchParticipantsTable.id, participant.id));
+            const [matchForPayout] = await db
+              .select({ venueId: hostedMatchesTable.venueId })
+              .from(hostedMatchesTable)
+              .where(eq(hostedMatchesTable.id, payment.referenceId))
+              .limit(1);
+            if (matchForPayout) {
+              await generateMatchPayout(matchForPayout.venueId, payment.referenceId, Number(payment.amount));
             }
           }
-        } catch (err) {
-          logger.error({ err, paymentId: payment.id }, "Webhook post-payment processing error");
         }
-      });
+      } catch (err) {
+        logger.error({ err, paymentId: payment.id }, "Webhook match_final post-payment error");
+      }
     } else if (event === "payment.failed") {
       await db
         .update(paymentsTable)

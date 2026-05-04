@@ -16,6 +16,11 @@ import { razorpay, verifyRazorpaySignature, getRazorpayKeyId } from "../lib/razo
 
 const router: IRouter = Router();
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUUID(id: string): boolean {
+  return UUID_RE.test(id);
+}
+
 function formatProfile(p: typeof profilesTable.$inferSelect) {
   return {
     id: p.id,
@@ -161,7 +166,95 @@ router.get("/hosted-matches", async (req, res) => {
   }
 });
 
+// POST /hosted-matches/create-order — Step 1: get a Razorpay order tied to real slot/venue
+// This replaces the unsafe tempRefId pattern. The frontend calls this first,
+// gets a real orderId, opens Razorpay, then calls POST /hosted-matches with the credentials.
+router.post("/hosted-matches/create-order", requireAuth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const profile = await getProfileByClerkId(userId!);
+    if (!profile) {
+      res.status(404).json({ error: "not_found", message: "Profile not found" });
+      return;
+    }
+
+    const { venueId, slotId, totalPlayers } = req.body;
+    if (!venueId || !slotId || !totalPlayers) {
+      res.status(400).json({ error: "validation", message: "venueId, slotId, totalPlayers required" });
+      return;
+    }
+
+    const [venue] = await db.select().from(venuesTable).where(eq(venuesTable.id, venueId)).limit(1);
+    if (!venue) {
+      res.status(404).json({ error: "not_found", message: "Venue not found" });
+      return;
+    }
+
+    const [slot] = await db.select().from(slotsTable).where(eq(slotsTable.id, slotId)).limit(1);
+    if (!slot) {
+      res.status(404).json({ error: "not_found", message: "Slot not found" });
+      return;
+    }
+
+    if (slot.status !== "available") {
+      res.status(409).json({ error: "slot_unavailable", message: "This slot is no longer available" });
+      return;
+    }
+
+    const hostFee = 99;
+    const reserveFee = Math.ceil(Number(venue.pricePerHour) / totalPlayers / 2);
+    const totalAmountToPayNow = hostFee + reserveFee;
+
+    if (!razorpay) {
+      // Dev mode — return mock order
+      res.json({
+        orderId: `order_dev_host_${Date.now()}`,
+        amount: Math.round(totalAmountToPayNow * 100),
+        currency: "INR",
+        razorpayKeyId: "rzp_test_placeholder",
+        prefillName: profile.fullName,
+        prefillEmail: profile.email,
+        prefillContact: profile.phone ?? null,
+        hostFee,
+        reserveFee,
+        totalAmountToPayNow,
+      });
+      return;
+    }
+
+    const order = await razorpay.orders.create({
+      amount: Math.round(totalAmountToPayNow * 100),
+      currency: "INR",
+      notes: {
+        type: "host_commitment",
+        venueId,
+        slotId,
+        userId: profile.id,
+        totalPlayers: String(totalPlayers),
+      },
+    });
+
+    res.json({
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      razorpayKeyId: getRazorpayKeyId(),
+      prefillName: profile.fullName,
+      prefillEmail: profile.email,
+      prefillContact: profile.phone ?? null,
+      hostFee,
+      reserveFee,
+      totalAmountToPayNow,
+    });
+  } catch (err) {
+    req.log.error({ err }, "Error creating host match order");
+    res.status(500).json({ error: "internal_error", message: "Failed to create payment order" });
+  }
+});
+
 // POST /hosted-matches
+// C4: Entire payment + slot + match creation wrapped in one db.transaction.
+// Any failure rolls back all three — no orphan held slots or orphan payments.
 router.post("/hosted-matches", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -191,10 +284,14 @@ router.post("/hosted-matches", requireAuth, async (req, res) => {
       return;
     }
 
-    // Get slot and venue
+    // Load slot and venue before transaction to fail fast on missing data
     const [slot] = await db.select().from(slotsTable).where(eq(slotsTable.id, slotId)).limit(1);
     if (!slot) {
       res.status(404).json({ error: "not_found", message: "Slot not found" });
+      return;
+    }
+    if (slot.status !== "available") {
+      res.status(409).json({ error: "slot_unavailable", message: "This slot is no longer available" });
       return;
     }
 
@@ -210,54 +307,60 @@ router.post("/hosted-matches", requireAuth, async (req, res) => {
     const finalFeePerPlayer = Math.ceil(totalVenueCost / totalPlayers);
     const hostFee = 99;
 
-    // Record host payment
-    const [payment] = await db
-      .insert(paymentsTable)
-      .values({
-        userId: profile.id,
-        type: "host_commitment",
-        razorpayOrderId,
-        razorpayPaymentId,
-        razorpaySignature,
-        amount: hostFee.toString(),
-        status: "success",
-      })
-      .returning();
+    // C4: Single transaction — payment + slot hold + match creation
+    // If any step throws, the entire transaction rolls back automatically.
+    const { match } = await db.transaction(async (tx) => {
+      // Record host payment
+      const [payment] = await tx
+        .insert(paymentsTable)
+        .values({
+          userId: profile.id,
+          type: "host_commitment",
+          razorpayOrderId,
+          razorpayPaymentId,
+          razorpaySignature,
+          amount: hostFee.toString(),
+          status: "success",
+        })
+        .returning();
 
-    // Mark slot as held
-    await db
-      .update(slotsTable)
-      .set({ status: "held", updatedAt: new Date() })
-      .where(eq(slotsTable.id, slotId));
+      // Mark slot as held
+      await tx
+        .update(slotsTable)
+        .set({ status: "held", updatedAt: new Date() })
+        .where(eq(slotsTable.id, slotId));
 
-    // Create hosted match
-    const [match] = await db
-      .insert(hostedMatchesTable)
-      .values({
-        hostUserId: profile.id,
-        venueId,
-        slotId,
-        sport,
-        date: slot.date,
-        startTime: slot.startTime,
-        endTime: slot.endTime,
-        totalPlayers,
-        minPlayers,
-        skillLevel: skillLevel ?? "any",
-        reserveFee: reserveFee.toString(),
-        finalFeePerPlayer: finalFeePerPlayer.toString(),
-        totalVenueCost: totalVenueCost.toString(),
-        notes: notes ?? null,
-        status: "open",
-        hostPaymentId: payment.id,
-      })
-      .returning();
+      // Create hosted match
+      const [newMatch] = await tx
+        .insert(hostedMatchesTable)
+        .values({
+          hostUserId: profile.id,
+          venueId,
+          slotId,
+          sport,
+          date: slot.date,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          totalPlayers,
+          minPlayers,
+          skillLevel: skillLevel ?? "any",
+          reserveFee: reserveFee.toString(),
+          finalFeePerPlayer: finalFeePerPlayer.toString(),
+          totalVenueCost: totalVenueCost.toString(),
+          notes: notes ?? null,
+          status: "open",
+          hostPaymentId: payment.id,
+        })
+        .returning();
 
-    // Update payment reference
-    await db
-      .update(paymentsTable)
-      .set({ referenceId: match.id })
-      .where(eq(paymentsTable.id, payment.id));
+      // Update payment with match reference
+      await tx
+        .update(paymentsTable)
+        .set({ referenceId: newMatch.id })
+        .where(eq(paymentsTable.id, payment.id));
+
+      return { match: newMatch };
+    });
 
     res.status(201).json(formatMatch(match, venue, profile));
   } catch (err) {
@@ -339,6 +442,10 @@ router.get("/hosted-matches/joined", requireAuth, async (req, res) => {
 router.get("/hosted-matches/:matchId", async (req, res) => {
   try {
     const matchId = req.params.matchId as string;
+    if (!isValidUUID(matchId)) {
+      res.status(400).json({ error: "invalid_id", message: "Invalid match ID format" });
+      return;
+    }
     const { userId } = getAuth(req);
     const profile = userId ? await getProfileByClerkId(userId) : null;
 
@@ -547,6 +654,9 @@ router.get("/hosted-matches/:matchId/participants", async (req, res) => {
 });
 
 // POST /hosted-matches/:matchId/final-payment
+// C5: Before creating a new Razorpay order, check for an existing pending
+// match_final payment for this user+match. If one exists, return it instead
+// of creating a duplicate — prevents multiple pending orders and double payouts.
 router.post("/hosted-matches/:matchId/final-payment", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -573,7 +683,7 @@ router.post("/hosted-matches/:matchId/final-payment", requireAuth, async (req, r
       return;
     }
 
-    // Verify caller is a registered participant with "reserved" status
+    // Verify caller is a registered participant
     const [participant] = await db
       .select()
       .from(hostedMatchParticipantsTable)
@@ -602,6 +712,35 @@ router.post("/hosted-matches/:matchId/final-payment", requireAuth, async (req, r
 
     const finalFee = Number(match.finalFeePerPlayer);
     const amountPaise = Math.round(finalFee * 100);
+
+    // C5: Check for an existing pending order for this user+match before creating a new one
+    const [existingPendingOrder] = await db
+      .select()
+      .from(paymentsTable)
+      .where(
+        and(
+          eq(paymentsTable.userId, profile.id),
+          eq(paymentsTable.referenceId, matchId),
+          eq(paymentsTable.type, "match_final"),
+          eq(paymentsTable.status, "pending"),
+        ),
+      )
+      .limit(1);
+
+    if (existingPendingOrder?.razorpayOrderId) {
+      // Return the existing order — client can re-open Razorpay with it
+      res.json({
+        orderId: existingPendingOrder.razorpayOrderId,
+        amount: amountPaise,
+        currency: "INR",
+        razorpayKeyId: getRazorpayKeyId(),
+        prefillName: profile.fullName,
+        prefillEmail: profile.email,
+        prefillContact: profile.phone ?? null,
+        existingOrder: true,
+      });
+      return;
+    }
 
     if (!razorpay) {
       // Dev mode: return mock order when no Razorpay keys configured
@@ -695,7 +834,7 @@ router.post("/:matchId/cancel", requireAuth, async (req, res) => {
         ),
       );
 
-    // Issue refunds for deposited participants
+    // C1: Issue refunds for deposited participants — awaited before response
     const cancelReason = reason ?? "Match cancelled by host";
     for (const p of participants) {
       if (["reserved", "final_paid"].includes(p.status) && p.reservePaymentId) {
@@ -708,7 +847,7 @@ router.post("/:matchId/cancel", requireAuth, async (req, res) => {
             Number(match.reserveFee ?? 0),
           );
         } catch (e) {
-          req.log.warn({ err: e, participantId: p.id }, "Failed to refund participant on cancel");
+          req.log.error({ err: e, participantId: p.id }, "Failed to refund participant on cancel — manual review required");
         }
       }
     }

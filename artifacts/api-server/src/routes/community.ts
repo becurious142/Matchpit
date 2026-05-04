@@ -77,6 +77,10 @@ router.get("/community/feed", async (req, res) => {
 router.get("/community/:postId/comments", async (req, res) => {
   try {
     const postId = req.params.postId as string;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(postId)) {
+      res.status(400).json({ error: "invalid_id", message: "Invalid post ID format" });
+      return;
+    }
     const comments = await db.select({
       comment: communityPostCommentsTable,
       authorName: profilesTable.fullName,

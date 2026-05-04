@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useListHostedMatches, useListSports } from "@workspace/api-client-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Calendar, Clock, Trophy, Users, MapPin, Filter } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { motion } from "framer-motion";
+import { getVenueFallbackImage } from "@/lib/sport-utils";
 
 export default function Matches() {
   const [location, setLocation] = useLocation();
@@ -15,13 +16,26 @@ export default function Matches() {
   
   const [sport, setSport] = useState(searchParams.get("sport") || "");
   const [city, setCity] = useState(searchParams.get("city") || "Jaipur");
+  const [activeCities, setActiveCities] = useState<{ cityName: string; slug: string }[]>([]);
 
-  const { data: matchesData, isLoading: loadingMatches } = useListHostedMatches({ 
+  // Load active cities from API (same pattern as venues.tsx)
+  useEffect(() => {
+    fetch("/api/cities")
+      .then((r) => r.json())
+      .then((data: { cityName: string; slug: string }[]) => setActiveCities(data))
+      .catch(() => setActiveCities([{ cityName: "Jaipur", slug: "jaipur" }]));
+  }, []);
+
+  const cityNames = activeCities.length > 0
+    ? activeCities.map((c) => c.cityName)
+    : ["Jaipur"];
+
+  const { data: matchesData, isLoading: loadingMatches } = useListHostedMatches({
     sport: sport || undefined,
     city: city || undefined,
-    status: 'open'
+    status: "open",
   });
-  
+
   const { data: sportsData } = useListSports();
 
   const handleFilterSport = (slug: string) => {
@@ -32,8 +46,6 @@ export default function Matches() {
     if (newSport) params.set("sport", newSport);
     setLocation(`/matches?${params.toString()}`, { replace: true });
   };
-
-  const cities = ["Jaipur", "Delhi", "Mumbai"];
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl min-h-screen">
@@ -73,8 +85,8 @@ export default function Matches() {
               <MapPin className="w-3 h-3" /> City
             </div>
             <div className="flex flex-wrap gap-2">
-              {cities.map((c) => (
-                <Badge 
+              {cityNames.map((c) => (
+                <Badge
                   key={c}
                   variant={city === c ? "default" : "outline"}
                   className={`cursor-pointer px-3 py-1 ${city === c ? '' : 'hover:bg-primary/10 hover:text-primary hover:border-primary/50'}`}
@@ -124,7 +136,7 @@ export default function Matches() {
                       {match.venue?.coverImage ? (
                         <img src={match.venue.coverImage} alt={match.venue.name} className="w-full h-full object-cover opacity-80" />
                       ) : (
-                        <img src={`/venues/venue${(i % 4) + 1}.png`} alt="Venue" className="w-full h-full object-cover opacity-80" />
+                        <img src={getVenueFallbackImage(match.venue?.sports ?? [], i)} alt="Venue" className="w-full h-full object-cover opacity-80" />
                       )}
                       <div className="absolute inset-0 bg-gradient-to-t md:bg-gradient-to-r from-background via-background/50 to-transparent" />
                       <div className="absolute bottom-4 left-4 md:hidden">

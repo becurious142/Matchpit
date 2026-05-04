@@ -26,7 +26,6 @@ export async function dispatchNotification(
           type: templateKey as any,
           title: payload.title ?? templateKey,
           body: payload.body,
-          link: payload.link,
         });
         await db.insert(notificationDispatchLogsTable).values({
           userId,

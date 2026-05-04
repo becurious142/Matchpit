@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@clerk/react";
 import { useGetMyProfile } from "@workspace/api-client-react";
 import { Shield, Plus, Users, Trophy, Star, Swords } from "lucide-react";
+import { formatSportLabel } from "@/lib/sport-utils";
 
 const SPORTS = [
   { value: "all", label: "All" },
@@ -180,6 +181,15 @@ export default function SquadsPage() {
             <Shield className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-30" />
             <p className="font-bold text-lg text-muted-foreground">No squads yet.</p>
             <p className="text-sm text-muted-foreground mt-1">Be the first to create a squad in Jaipur!</p>
+            {isSignedIn && (
+              <Button
+                className="mt-6 font-bold uppercase italic"
+                size="sm"
+                onClick={() => setShowCreate(true)}
+              >
+                <Plus className="w-4 h-4 mr-1" /> Create a Squad
+              </Button>
+            )}
           </CardContent>
         </Card>
       ) : (
@@ -212,7 +222,7 @@ function SquadCard({ squad, onJoin, isSignedIn }: { squad: Squad; onJoin: () => 
           <div className="flex-1 min-w-0">
             <h3 className="font-bold text-base truncate">{squad.name}</h3>
             <Badge variant="secondary" className="text-[10px] uppercase font-bold mt-0.5">
-              {squad.sport.replace("_", " ")}
+              {formatSportLabel(squad.sport)}
             </Badge>
           </div>
         </div>

@@ -13,6 +13,28 @@ import { logger } from "./lib/logger";
 
 const app: Express = express();
 
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+// In production, restrict to explicit allowed origins via CORS_ORIGINS env var.
+// CORS_ORIGINS is a comma-separated list, e.g.:
+//   CORS_ORIGINS=https://matchpit.in,https://www.matchpit.in,https://matchpit.vercel.app
+// In development, allow all origins for convenience.
+function buildCorsOrigin(): cors.CorsOptions["origin"] {
+  const raw = process.env.CORS_ORIGINS ?? process.env.FRONTEND_URL ?? "";
+  if (!raw || process.env.NODE_ENV !== "production") {
+    return true; // allow all in dev
+  }
+  const allowed = new Set(
+    raw.split(",").map((o) => o.trim()).filter(Boolean)
+  );
+  return (origin, callback) => {
+    // Allow requests with no origin (server-to-server, curl, Razorpay webhooks)
+    if (!origin) return callback(null, true);
+    if (allowed.has(origin)) return callback(null, true);
+    logger.warn({ origin }, "CORS blocked request from disallowed origin");
+    callback(new Error(`CORS: origin ${origin} not allowed`));
+  };
+}
+
 app.use(
   pinoHttp({
     logger,
@@ -35,7 +57,13 @@ app.use(
 
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 
-app.use(cors({ credentials: true, origin: true }));
+app.use(cors({ credentials: true, origin: buildCorsOrigin() }));
+
+// ─── RAW BODY for Razorpay webhook HMAC verification ─────────────────────────
+// Must be registered BEFORE express.json() so the raw buffer is available
+// on req.body for the /api/payments/webhook route.
+app.use("/api/payments/webhook", express.raw({ type: "application/json" }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

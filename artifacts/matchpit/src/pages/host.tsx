@@ -3,11 +3,10 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { 
-  useListSports, 
-  useListVenues, 
-  useGetVenueSlots, 
-  useCreatePaymentOrder,
+import {
+  useListSports,
+  useListVenues,
+  useGetVenueSlots,
   useVerifyPayment,
   useCreateHostedMatch
 } from "@workspace/api-client-react";
@@ -69,14 +68,16 @@ export default function HostMatch() {
   const availableSlots = slotsData?.[0]?.slots || [];
   const selectedSlot = availableSlots.find(s => s.id === watchSlotId);
 
-  // Commerce Math
-  const hostFee = 99; // Fixed platform fee for hosting
+  // Commerce Math — mirrors backend exactly:
+  // backend: reserveFee = Math.ceil(totalVenueCost / totalPlayers / 2)
+  // backend: finalFeePerPlayer = Math.ceil(totalVenueCost / totalPlayers)
+  // backend: hostFee = 99 (fixed platform fee)
+  const hostFee = 99;
   const venuePrice = selectedSlot?.priceOverride || selectedVenue?.pricePerHour || 0;
-  const reserveFeePerPlayer = Math.ceil(venuePrice * 0.2 / watchTotalPlayers); // 20% collected upfront
-  const totalAmountToPayNow = hostFee + reserveFeePerPlayer; // Host pays platform fee + their own reserve fee
+  const reserveFeePerPlayer = Math.ceil(venuePrice / watchTotalPlayers / 2);
   const finalEstPerPlayer = Math.ceil(venuePrice / watchTotalPlayers);
+  const totalAmountToPayNow = hostFee + reserveFeePerPlayer;
 
-  const createPaymentOrder = useCreatePaymentOrder();
   const verifyPayment = useVerifyPayment();
   const createMatch = useCreateHostedMatch();
 
@@ -88,20 +89,29 @@ export default function HostMatch() {
 
     setIsProcessing(true);
     try {
-      // Create a temporary reference string since we don't have a match ID yet
-      const tempRefId = `host_${Date.now()}`;
-      
-      const order = await createPaymentOrder.mutateAsync({
-        data: {
-          type: "host_commitment",
-          referenceId: tempRefId,
-          amount: totalAmountToPayNow
-        }
+      // ── SAFE ATOMIC FLOW ──────────────────────────────────────────────────
+      // Step 1: Get a Razorpay order from the backend using real slot/venue data.
+      //         No tempRefId — the backend validates slot availability here.
+      const orderRes = await fetch("/api/hosted-matches/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          venueId: values.venueId,
+          slotId: values.slotId,
+          totalPlayers: values.totalPlayers,
+        }),
       });
+      if (!orderRes.ok) {
+        const err = await orderRes.json();
+        throw new Error(err.message ?? "Failed to create payment order");
+      }
+      const order = await orderRes.json();
 
+      // Step 2: Load Razorpay SDK
       const isLoaded = await loadRazorpay();
       if (!isLoaded) throw new Error("Razorpay SDK failed to load");
 
+      // Step 3: Open Razorpay checkout
       const options = {
         key: order.razorpayKeyId,
         amount: order.amount,
@@ -112,19 +122,19 @@ export default function HostMatch() {
         theme: { color: "#84cc16" },
         handler: async function (response: any) {
           try {
+            // Step 4: Verify payment signature
             await verifyPayment.mutateAsync({
               data: {
                 razorpayOrderId: response.razorpay_order_id,
                 razorpayPaymentId: response.razorpay_payment_id,
                 razorpaySignature: response.razorpay_signature,
                 type: "host_commitment",
-                referenceId: tempRefId
+                referenceId: response.razorpay_order_id, // backend will update with real matchId
               }
             });
 
-            // Calculate min players automatically (60% of total)
+            // Step 5: Create the match — backend creates payment record + match atomically
             const minPlayers = Math.max(2, Math.ceil(values.totalPlayers * 0.6));
-
             const match = await createMatch.mutateAsync({
               data: {
                 venueId: values.venueId,
@@ -136,14 +146,14 @@ export default function HostMatch() {
                 notes: values.notes,
                 razorpayOrderId: response.razorpay_order_id,
                 razorpayPaymentId: response.razorpay_payment_id,
-                razorpaySignature: response.razorpay_signature
+                razorpaySignature: response.razorpay_signature,
               }
             });
 
             toast({ title: "Match Created! 🎯", description: "Your match is now live and open for players to join." });
             setLocation(`/matches/${match.id}`);
           } catch (err: any) {
-            toast({ title: "Verification failed", description: err.message, variant: "destructive" });
+            toast({ title: "Match creation failed", description: err.message, variant: "destructive" });
           } finally {
             setIsProcessing(false);
           }
@@ -151,7 +161,10 @@ export default function HostMatch() {
       };
 
       const rzp = new (window as any).Razorpay(options);
-      rzp.on('payment.failed', () => setIsProcessing(false));
+      rzp.on("payment.failed", () => {
+        setIsProcessing(false);
+        toast({ title: "Payment cancelled", description: "No charge was made.", variant: "destructive" });
+      });
       rzp.open();
 
     } catch (err: any) {
@@ -316,7 +329,9 @@ export default function HostMatch() {
                       <FormControl>
                         <Input type="number" {...field} className="h-14 text-lg font-bold" />
                       </FormControl>
-                      <p className="text-xs text-muted-foreground">Match confirms when 60% spots are filled.</p>
+                      <p className="text-xs text-muted-foreground">
+                        Once minimum players join, everyone pays the final share and the venue gets locked automatically.
+                      </p>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -432,7 +447,7 @@ export default function HostMatch() {
                     </div>
                   </div>
                   <p className="text-[10px] text-muted-foreground text-center">
-                    Matchpit automatically collects the remaining amount from players. If the match fails to fill minimum spots, full refund is guaranteed.
+                    Players pay their reserve fee to join. Once minimum players are in, everyone pays the final share and the venue is locked. Full refund if the match doesn't fill.
                   </p>
                 </CardContent>
               </Card>

@@ -249,7 +249,7 @@ export default function MatchDetail() {
             {/* Chat Tab */}
             {activeTab === "chat" && (
               <Card className="bg-card border-border/50">
-                <CardContent className="p-0 flex flex-col" style={{ height: "480px" }}>
+                <CardContent className="p-0 flex flex-col" style={{ height: "min(480px, calc(100vh - 420px))", minHeight: "320px" }}>
                   <div className="flex-1 overflow-y-auto p-4 space-y-3">
                     {!chatMessages?.length ? (
                       <div className="flex flex-col items-center justify-center h-full text-center">

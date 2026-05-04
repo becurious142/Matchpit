@@ -127,21 +127,6 @@ router.get("/admin/strikes", requireAdmin, async (req, res) => {
   }
 });
 
-// ─── POST /admin/users/:userId/suspend ───────────────────────────────────────
-router.post("/admin/users/:userId/suspend", requireAdmin, async (req, res) => {
-  try {
-    const userId = req.params.userId as string;
-    const { suspended } = req.body;
-    await db.update(profilesTable)
-      .set({ isSuspended: suspended ?? true })
-      .where(eq(profilesTable.id, userId));
-    res.json({ ok: true, suspended: suspended ?? true });
-  } catch (err) {
-    req.log.error({ err }, "Error suspending user");
-    res.status(500).json({ error: "internal_error" });
-  }
-});
-
 // ─── GET /admin/dispatch-logs ─────────────────────────────────────────────────
 router.get("/admin/dispatch-logs", requireAdmin, async (req, res) => {
   try {
