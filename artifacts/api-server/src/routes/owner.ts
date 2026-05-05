@@ -9,7 +9,23 @@ import {
   slotsTable,
 } from "@workspace/db";
 import { eq, and, gte, lte, sum, count, desc, sql } from "drizzle-orm";
+import { addDays, format, parseISO } from "date-fns";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
+
+function computeVenueSlotPrice(
+  venue: typeof venuesTable.$inferSelect,
+  slot: typeof slotsTable.$inferSelect,
+): number {
+  if (slot.priceOverride != null) return Number(slot.priceOverride);
+  const date = new Date(slot.date);
+  const dayOfWeek = date.getDay();
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  if (isWeekend) return venue.weekendPrice;
+  const hour = parseInt(slot.startTime.split(":")[0]!, 10);
+  if (hour < 10) return venue.weekdayMorningPrice;
+  if (hour < 17) return venue.weekdayDayPrice;
+  return venue.weekdayEveningPrice;
+}
 
 const router: IRouter = Router();
 
@@ -178,6 +194,75 @@ router.get("/owner/payouts", requireAuth, async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Error fetching owner payouts");
     res.status(500).json({ error: "internal_error", message: "Failed to fetch payouts" });
+  }
+});
+
+// ─── GET /owner/venues/:venueId/slots ─────────────────────────────────────────
+// Returns full slot inventory for an owner-verified venue, grouped by date.
+router.get("/owner/venues/:venueId/slots", requireAuth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const profile = await getProfileByClerkId(userId!);
+    if (!profile) { res.status(404).json({ error: "not_found", message: "Profile not found" }); return; }
+
+    const venueId = req.params.venueId as string;
+
+    const [venue] = await db
+      .select()
+      .from(venuesTable)
+      .where(and(eq(venuesTable.id, venueId), eq(venuesTable.ownerUserId, profile.id)))
+      .limit(1);
+
+    if (!venue) {
+      res.status(403).json({ error: "forbidden", message: "Venue not found or not owned by you" });
+      return;
+    }
+
+    const today = new Date();
+    const fromDate = req.query.from ? parseISO(req.query.from as string) : today;
+    const toDate = req.query.to ? parseISO(req.query.to as string) : addDays(today, 13);
+
+    const fromStr = format(fromDate, "yyyy-MM-dd");
+    const toStr = format(toDate, "yyyy-MM-dd");
+
+    const slots = await db
+      .select()
+      .from(slotsTable)
+      .where(
+        and(
+          eq(slotsTable.venueId, venueId),
+          gte(slotsTable.date, fromStr),
+          lte(slotsTable.date, toStr),
+        ),
+      )
+      .orderBy(slotsTable.date, slotsTable.startTime);
+
+    // Group by date
+    const grouped: Record<string, typeof slots> = {};
+    for (const slot of slots) {
+      if (!grouped[slot.date]) grouped[slot.date] = [];
+      grouped[slot.date].push(slot);
+    }
+
+    const result = Object.entries(grouped)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, daySlots]) => ({
+        date,
+        slots: daySlots.map((s) => ({
+          id: s.id,
+          date: s.date,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          status: s.status,
+          isBlockedByOwner: s.isBlockedByOwner,
+          computedPrice: computeVenueSlotPrice(venue, s),
+        })),
+      }));
+
+    res.json(result);
+  } catch (err) {
+    req.log.error({ err }, "Error fetching owner venue slots");
+    res.status(500).json({ error: "internal_error", message: "Failed to fetch slots" });
   }
 });
 
