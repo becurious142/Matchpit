@@ -45,6 +45,7 @@ export default defineConfig({
     // vercel.json#outputDirectory is set to "dist" (repo root relative).
     outDir: path.resolve(import.meta.dirname, "../../dist"),
     emptyOutDir: true,
+    sourcemap: false,
   },
   server: {
     port,
