@@ -2,6 +2,7 @@ import {
   pgTable,
   text,
   numeric,
+  integer,
   timestamp,
   uuid,
   date,
@@ -40,6 +41,10 @@ export const bookingsTable = pgTable("bookings", {
   paymentId: uuid("payment_id"),
   razorpayOrderId: text("razorpay_order_id"),
   razorpayPaymentId: text("razorpay_payment_id"),
+  durationHours: integer("duration_hours"),
+  slotCount: integer("slot_count"),
+  memberPrice: integer("member_price"),
+  walletCreditEarned: integer("wallet_credit_earned").default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

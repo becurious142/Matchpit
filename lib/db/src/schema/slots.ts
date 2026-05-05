@@ -1,6 +1,7 @@
 import {
   pgTable,
   text,
+  boolean,
   numeric,
   timestamp,
   uuid,
@@ -29,6 +30,7 @@ export const slotsTable = pgTable("slots", {
   priceOverride: numeric("price_override", { precision: 10, scale: 2 }),
   status: slotStatusEnum("status").notNull().default("available"),
   sport: text("sport"),
+  isBlockedByOwner: boolean("is_blocked_by_owner").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
