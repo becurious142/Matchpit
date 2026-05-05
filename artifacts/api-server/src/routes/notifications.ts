@@ -11,8 +11,10 @@ router.get("/notifications", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
     const profile = await getProfileByClerkId(userId!);
+    // Profile may not exist yet for brand-new users who haven't hit /profile/me yet.
+    // Return an empty array — new users have no notifications.
     if (!profile) {
-      res.status(404).json({ error: "not_found", message: "Profile not found" });
+      res.json([]);
       return;
     }
 

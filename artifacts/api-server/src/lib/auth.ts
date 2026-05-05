@@ -15,6 +15,38 @@ export async function requireAuth(
     res.status(401).json({ error: "unauthorized", message: "Authentication required" });
     return;
   }
+
+  // Auto-seed profile for new users on any authenticated route.
+  // This prevents race conditions where the frontend calls /notifications, /dashboard etc.
+  // before /profile/me has had a chance to create the profile row.
+  try {
+    const existing = await getProfileByClerkId(userId);
+    if (!existing) {
+      // Profile doesn't exist yet — fetch user info from Clerk and create it.
+      // We do this lazily here so every authenticated endpoint is safe.
+      try {
+        const { createClerkClient } = await import("@clerk/backend");
+        const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+        const clerkUser = await clerkClient.users.getUser(userId);
+        const email = clerkUser.emailAddresses?.[0]?.emailAddress ?? "";
+        const fullName =
+          [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") ||
+          clerkUser.username ||
+          "Player";
+        if (email) {
+          const profile = await getOrCreateProfile(userId, email, fullName);
+          (req as any).userProfile = profile;
+        }
+      } catch {
+        // If Clerk lookup fails, continue — route handler will deal with missing profile
+      }
+    } else {
+      (req as any).userProfile = existing;
+    }
+  } catch {
+    // DB error — don't block auth, let the route handler deal with it
+  }
+
   next();
 }
 
