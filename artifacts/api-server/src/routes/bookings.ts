@@ -8,7 +8,7 @@ import {
   paymentsTable,
   notificationsTable,
 } from "@workspace/db";
-import { eq, and, desc, inArray, sql } from "drizzle-orm";
+import { eq, and, desc, inArray, sql, gte, lte } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 import { verifyRazorpaySignature } from "../lib/razorpay";
 import { debitWallet, processFirstBookingCashback, processReferralRewards, processCancellationRefund } from "../lib/wallet";
@@ -16,6 +16,35 @@ import { generateBookingPayout } from "../lib/payouts";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
+
+// ─── Shared helpers ────────────────────────────────────────────────────────────
+
+function computeVenueSlotPrice(
+  venue: typeof venuesTable.$inferSelect,
+  slot: typeof slotsTable.$inferSelect,
+): number {
+  if (slot.priceOverride != null) return Number(slot.priceOverride);
+  const date = new Date(slot.date);
+  const dayOfWeek = date.getDay(); // 0=Sun, 6=Sat
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  if (isWeekend) return venue.weekendPrice;
+  const hour = parseInt(slot.startTime.split(":")[0]!, 10);
+  if (hour < 10) return venue.weekdayMorningPrice;
+  if (hour < 17) return venue.weekdayDayPrice;
+  return venue.weekdayEveningPrice;
+}
+
+function validateConsecutiveSlots(slots: typeof slotsTable.$inferSelect[]): boolean {
+  if (slots.length === 0) return false;
+  const sorted = [...slots].sort((a, b) => a.startTime.localeCompare(b.startTime));
+  for (let i = 0; i < sorted.length - 1; i++) {
+    if (sorted[i]!.date !== sorted[i + 1]!.date) return false;
+    if (sorted[i]!.endTime !== sorted[i + 1]!.startTime) return false;
+  }
+  return true;
+}
+
+// ─── Format helpers ────────────────────────────────────────────────────────────
 
 function formatBooking(
   b: typeof bookingsTable.$inferSelect,
@@ -31,6 +60,10 @@ function formatBooking(
     startTime: b.startTime,
     endTime: b.endTime,
     totalAmount: Number(b.totalAmount),
+    durationHours: b.durationHours ?? null,
+    slotCount: b.slotCount ?? null,
+    memberPrice: b.memberPrice ?? null,
+    walletCreditEarned: b.walletCreditEarned ?? 0,
     status: b.status,
     paymentId: b.paymentId ?? null,
     createdAt: b.createdAt.toISOString(),
@@ -52,6 +85,7 @@ function formatBooking(
   };
 }
 
+// ─── GET /bookings ─────────────────────────────────────────────────────────────
 router.get("/bookings", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -93,8 +127,8 @@ router.get("/bookings", requireAuth, async (req, res) => {
 });
 
 // ─── POST /bookings ───────────────────────────────────────────────────────────
-// C3: Idempotency guard on razorpayOrderId + verified slot row-count lock.
-// C1: Post-booking commerce (payout, cashback, referral) awaited before response.
+// Accepts slotIds[] for multi-slot bookings. All slots must be consecutive,
+// available, and not owner-blocked. Total is computed server-side.
 router.post("/bookings", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -106,7 +140,7 @@ router.post("/bookings", requireAuth, async (req, res) => {
 
     const {
       venueId,
-      slotId,
+      slotIds,
       sport,
       razorpayOrderId,
       razorpayPaymentId,
@@ -114,7 +148,12 @@ router.post("/bookings", requireAuth, async (req, res) => {
       walletAmountUsed = 0,
     } = req.body;
 
-    // C3: Idempotency — if a successful booking already exists for this order, return it
+    if (!Array.isArray(slotIds) || slotIds.length === 0) {
+      res.status(400).json({ error: "validation", message: "slotIds must be a non-empty array" });
+      return;
+    }
+
+    // ── Idempotency: if a successful booking already exists for this order ──
     if (razorpayOrderId) {
       const [existingPayment] = await db
         .select()
@@ -146,41 +185,66 @@ router.post("/bookings", requireAuth, async (req, res) => {
       return;
     }
 
+    // ── Fetch venue + all slots ─────────────────────────────────────────────
     const [venue] = await db.select().from(venuesTable).where(eq(venuesTable.id, venueId)).limit(1);
     if (!venue) {
       res.status(404).json({ error: "not_found", message: "Venue not found" });
       return;
     }
 
+    const slots = await db.select().from(slotsTable).where(inArray(slotsTable.id, slotIds as string[]));
+
+    if (slots.length !== (slotIds as string[]).length) {
+      res.status(404).json({ error: "not_found", message: "One or more slots not found" });
+      return;
+    }
+
+    // All slots must belong to this venue
+    if (slots.some((s) => s.venueId !== venueId)) {
+      res.status(400).json({ error: "validation", message: "All slots must belong to the specified venue" });
+      return;
+    }
+
+    // All slots must be available and not owner-blocked
+    const blockedOrUnavailable = slots.filter((s) => s.isBlockedByOwner || s.status !== "available");
+    if (blockedOrUnavailable.length > 0) {
+      res.status(409).json({ error: "slot_unavailable", message: "One or more slots are not available" });
+      return;
+    }
+
+    // Slots must be consecutive
+    if (!validateConsecutiveSlots(slots)) {
+      res.status(400).json({ error: "validation", message: "Slots must be consecutive and on the same day" });
+      return;
+    }
+
+    // Sort slots by startTime for deterministic first/last
+    const sortedSlots = [...slots].sort((a, b) => a.startTime.localeCompare(b.startTime));
+    const firstSlot = sortedSlots[0]!;
+    const lastSlot = sortedSlots[sortedSlots.length - 1]!;
+
+    // ── Server-side total computation ───────────────────────────────────────
+    const totalAmount = slots.reduce((sum, s) => sum + computeVenueSlotPrice(venue, s), 0);
     const walletUsed = Math.min(Number(walletAmountUsed), Number(profile.walletBalance));
+    const walletCreditEarned = Math.floor(totalAmount * 0.03);
 
+    // ── Atomic transaction ──────────────────────────────────────────────────
     const result = await db.transaction(async (tx) => {
-      const [slot] = await tx
-        .select()
-        .from(slotsTable)
-        .where(eq(slotsTable.id, slotId))
-        .limit(1);
-
-      if (!slot) return { error: "not_found" as const };
-      if (slot.status !== "available") return { error: "slot_unavailable" as const };
-
-      const totalAmount = Number(slot.priceOverride ?? venue.pricePerHour);
-
       if (walletUsed > 0) {
         const txDb = tx as unknown as typeof db;
-        await debitWallet(txDb, profile.id, walletUsed, "Wallet used for booking payment", slotId);
+        await debitWallet(txDb, profile.id, walletUsed, "Wallet used for booking payment", firstSlot.id);
       }
 
-      // C3: Conditional update with row-count verification — prevents double-booking
+      // Conditionally update ALL selected slots available -> booked
       const updateResult = await tx.execute(
         sql`UPDATE ${slotsTable}
             SET status = 'booked', updated_at = NOW()
-            WHERE id = ${slotId} AND status = 'available'`,
+            WHERE id = ANY(ARRAY[${sql.raw((slotIds as string[]).map((id) => `'${id}'`).join(","))}]::uuid[])
+            AND status = 'available'`,
       );
 
-      // Drizzle returns rowCount on execute for Neon/pg drivers
-      const rowsAffected = (updateResult as unknown as { rowCount?: number }).rowCount ?? 1;
-      if (rowsAffected === 0) {
+      const rowsAffected = (updateResult as unknown as { rowCount?: number }).rowCount ?? 0;
+      if (rowsAffected !== (slotIds as string[]).length) {
         return { error: "slot_unavailable" as const };
       }
 
@@ -202,16 +266,20 @@ router.post("/bookings", requireAuth, async (req, res) => {
         .values({
           userId: profile.id,
           venueId,
-          slotId,
+          slotId: firstSlot.id,
           sport,
-          date: slot.date,
-          startTime: slot.startTime,
-          endTime: slot.endTime,
+          date: firstSlot.date,
+          startTime: firstSlot.startTime,
+          endTime: lastSlot.endTime,
           totalAmount: totalAmount.toString(),
           status: "confirmed",
           paymentId: payment.id,
           razorpayOrderId,
           razorpayPaymentId,
+          durationHours: sortedSlots.length,
+          slotCount: sortedSlots.length,
+          memberPrice: totalAmount,
+          walletCreditEarned,
         })
         .returning();
 
@@ -220,34 +288,30 @@ router.post("/bookings", requireAuth, async (req, res) => {
         .set({ referenceId: booking.id })
         .where(eq(paymentsTable.id, payment.id));
 
-      return { booking, venue, slot };
+      return { booking, venue, firstSlot, lastSlot };
     });
 
     if ("error" in result) {
-      if (result.error === "not_found") {
-        res.status(404).json({ error: "not_found", message: "Slot not found" });
-      } else {
-        res.status(409).json({ error: "slot_unavailable", message: "Slot is no longer available" });
-      }
+      res.status(409).json({ error: "slot_unavailable", message: "One or more slots are no longer available" });
       return;
     }
 
-    const { booking, slot } = result;
+    const { booking, firstSlot: slot } = result;
 
-    // Notification — non-critical, log on failure
+    // Notification — non-critical
     try {
       await db.insert(notificationsTable).values({
         userId: profile.id,
         type: "payment_success",
         title: "Booking Confirmed!",
-        body: `Your booking at ${venue.name} on ${slot.date} (${slot.startTime} - ${slot.endTime}) is confirmed.`,
+        body: `Your booking at ${venue.name} on ${slot.date} (${firstSlot.startTime} - ${lastSlot.endTime}) is confirmed.`,
         referenceId: booking.id,
       });
     } catch (e) {
       logger.warn({ err: e }, "Booking confirmation notification failed");
     }
 
-    // C1: Post-booking commerce — awaited before response, no setImmediate
+    // Post-booking commerce — awaited before response
     await generateBookingPayout(venue.id, booking.id, Number(booking.totalAmount));
     await processFirstBookingCashback(profile.id, booking.id);
     await processReferralRewards(profile.id);
@@ -259,6 +323,7 @@ router.post("/bookings", requireAuth, async (req, res) => {
   }
 });
 
+// ─── GET /bookings/:bookingId ──────────────────────────────────────────────────
 router.get("/bookings/:bookingId", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -280,12 +345,7 @@ router.get("/bookings/:bookingId", requireAuth, async (req, res) => {
       return;
     }
 
-    const [venue] = await db
-      .select()
-      .from(venuesTable)
-      .where(eq(venuesTable.id, booking.venueId))
-      .limit(1);
-
+    const [venue] = await db.select().from(venuesTable).where(eq(venuesTable.id, booking.venueId)).limit(1);
     res.json(formatBooking(booking, venue ?? null));
   } catch (err) {
     req.log.error({ err }, "Error fetching booking");
@@ -294,7 +354,7 @@ router.get("/bookings/:bookingId", requireAuth, async (req, res) => {
 });
 
 // ─── POST /bookings/:bookingId/cancel ─────────────────────────────────────────
-// C1: Cancellation refund is awaited before response — no setImmediate.
+// Restores ALL slots covered by the booking time range (multi-slot aware).
 router.post("/bookings/:bookingId/cancel", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -321,10 +381,18 @@ router.post("/bookings/:bookingId/cancel", requireAuth, async (req, res) => {
       return;
     }
 
+    // Restore ALL slots in the time range covered by this booking
     await db
       .update(slotsTable)
       .set({ status: "available", updatedAt: new Date() })
-      .where(eq(slotsTable.id, booking.slotId));
+      .where(
+        and(
+          eq(slotsTable.venueId, booking.venueId),
+          eq(slotsTable.date, booking.date),
+          gte(slotsTable.startTime, booking.startTime),
+          lte(slotsTable.endTime, booking.endTime),
+        ),
+      );
 
     const [updated] = await db
       .update(bookingsTable)
@@ -332,7 +400,7 @@ router.post("/bookings/:bookingId/cancel", requireAuth, async (req, res) => {
       .where(eq(bookingsTable.id, bookingId))
       .returning();
 
-    // C1: Cancellation refund awaited before response — no setImmediate
+    // Cancellation refund — 50% back to wallet, awaited before response
     const refund = Math.floor(Number(booking.totalAmount) * 0.5);
     if (refund > 0) {
       try {

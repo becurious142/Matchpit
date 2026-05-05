@@ -1,0 +1,122 @@
+Implement backend Batch V2 — multi-slot venue commerce rewrite.
+
+Modify ONLY:
+1. artifacts/api-server/src/routes/venues.ts
+2. artifacts/api-server/src/routes/payments.ts
+3. artifacts/api-server/src/routes/bookings.ts
+
+Do not touch frontend.
+
+========================
+A. GET /api/venues/:venueId/slots
+========================
+
+Enhance slot response so every slot returns:
+
+- isBlockedByOwner
+- computedPrice
+
+computedPrice rules:
+- if Saturday/Sunday => weekendPrice
+- else if startTime < 10:00 => weekdayMorningPrice
+- else if startTime < 17:00 => weekdayDayPrice
+- else => weekdayEveningPrice
+
+if slot.priceOverride exists, it overrides computedPrice.
+
+Also exclude any slot where isBlockedByOwner=true from bookable availability (status should return "unavailable").
+
+========================
+B. POST /api/payments/create-order
+========================
+
+For type="booking":
+
+Do NOT trust client amount.
+
+Expected body now:
+{
+  type: "booking",
+  venueId: "...",
+  slotIds: ["...", "..."],
+  walletAmountUsed?: number
+}
+
+Server must:
+- fetch venue
+- fetch all slotIds
+- ensure all slots belong to same venue
+- ensure all slots are consecutive by time
+- ensure all slots are available and not owner blocked
+- compute each slot price using same rules as above
+- total the amount server-side
+- clamp wallet use from DB balance
+- create Razorpay order from server total only
+
+Return:
+orderId, amount, walletAmountUsed, computedGrossAmount
+
+Keep existing behavior unchanged for non-booking payment types.
+
+========================
+C. POST /api/bookings
+========================
+
+Expected body now:
+{
+  venueId,
+  slotIds: string[],
+  sport,
+  razorpayOrderId,
+  razorpayPaymentId,
+  razorpaySignature,
+  walletAmountUsed?
+}
+
+Implement:
+
+1. pre-idempotency check on successful razorpayOrderId (existing behavior keep)
+
+2. fetch venue + all slots
+
+3. validate:
+- all same venue
+- all consecutive
+- all available
+- none owner blocked
+
+4. compute totalAmount server-side using exact same pricing logic
+
+5. inside ONE db.transaction:
+- conditionally update ALL selected slots from available -> booked
+- if updated row count != slotIds.length throw 409
+- insert ONE booking row using:
+   slotId = first slot id
+   startTime = first slot.startTime
+   endTime = last slot.endTime
+   durationHours = slotIds.length
+   slotCount = slotIds.length
+   memberPrice = totalAmount
+   walletCreditEarned = floor(totalAmount * 0.03)
+
+6. after successful booking:
+- await payout generation/cashback/referral existing logic
+
+7. cancellation route should restore ALL slots covered by booking:
+find all slots for booking venue/date where start>=booking.startTime and end<=booking.endTime and set available
+
+========================
+IMPORTANT
+========================
+
+Create small shared helper functions INSIDE these route files if needed:
+- computeVenueSlotPrice()
+- validateConsecutiveSlots()
+
+Do not create new external utility files.
+
+Preserve all TypeScript correctness.
+
+After changes run:
+- tsc --noEmit api-server
+and return only completion report.

@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { venuesTable, slotsTable } from "@workspace/db";
-import { eq, and, gte, lte, ilike, sql, or } from "drizzle-orm";
+import { eq, and, gte, lte, ilike } from "drizzle-orm";
 import { addDays, format, parseISO } from "date-fns";
 
 const router: IRouter = Router();
@@ -9,6 +9,21 @@ const router: IRouter = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isValidUUID(id: string): boolean {
   return UUID_RE.test(id);
+}
+
+function computeVenueSlotPrice(
+  venue: typeof venuesTable.$inferSelect,
+  slot: typeof slotsTable.$inferSelect,
+): number {
+  if (slot.priceOverride != null) return Number(slot.priceOverride);
+  const date = new Date(slot.date);
+  const dayOfWeek = date.getDay(); // 0=Sun, 6=Sat
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  if (isWeekend) return venue.weekendPrice;
+  const hour = parseInt(slot.startTime.split(":")[0]!, 10);
+  if (hour < 10) return venue.weekdayMorningPrice;
+  if (hour < 17) return venue.weekdayDayPrice;
+  return venue.weekdayEveningPrice;
 }
 
 function formatVenue(v: typeof venuesTable.$inferSelect) {
@@ -19,6 +34,11 @@ function formatVenue(v: typeof venuesTable.$inferSelect) {
     address: v.address,
     sports: v.sports ?? [],
     pricePerHour: Number(v.pricePerHour),
+    weekdayMorningPrice: v.weekdayMorningPrice,
+    weekdayDayPrice: v.weekdayDayPrice,
+    weekdayEveningPrice: v.weekdayEveningPrice,
+    weekendPrice: v.weekendPrice,
+    slotIntervalMins: v.slotIntervalMins,
     coverImage: v.coverImage ?? null,
     rating: Number(v.rating),
     totalReviews: v.totalReviews,
@@ -52,22 +72,14 @@ router.get("/venues", async (req, res) => {
     if (city) conditions.push(eq(venuesTable.city, city));
     if (search) conditions.push(ilike(venuesTable.name, `%${search}%`));
 
-    let query = db.select().from(venuesTable).where(and(...conditions));
-
+    const query = db.select().from(venuesTable).where(and(...conditions));
     const all = await query;
-    const filtered = sport
-      ? all.filter((v) => v.sports.includes(sport))
-      : all;
+    const filtered = sport ? all.filter((v) => v.sports.includes(sport)) : all;
 
     const total = filtered.length;
     const venues = filtered.slice(offset, offset + limitNum).map(formatVenue);
 
-    res.json({
-      venues,
-      total,
-      page: pageNum,
-      totalPages: Math.ceil(total / limitNum),
-    });
+    res.json({ venues, total, page: pageNum, totalPages: Math.ceil(total / limitNum) });
   } catch (err) {
     req.log.error({ err }, "Error listing venues");
     res.status(500).json({ error: "internal_error", message: "Failed to list venues" });
@@ -116,17 +128,11 @@ router.get("/venues/:venueId", async (req, res) => {
       res.status(400).json({ error: "invalid_id", message: "Invalid venue ID format" });
       return;
     }
-    const [venue] = await db
-      .select()
-      .from(venuesTable)
-      .where(eq(venuesTable.id, venueId))
-      .limit(1);
-
+    const [venue] = await db.select().from(venuesTable).where(eq(venuesTable.id, venueId)).limit(1);
     if (!venue) {
       res.status(404).json({ error: "not_found", message: "Venue not found" });
       return;
     }
-
     res.json(formatVenueDetail(venue));
   } catch (err) {
     req.log.error({ err }, "Error fetching venue");
@@ -141,13 +147,16 @@ router.get("/venues/:venueId/slots", async (req, res) => {
       res.status(400).json({ error: "invalid_id", message: "Invalid venue ID format" });
       return;
     }
+
+    const [venue] = await db.select().from(venuesTable).where(eq(venuesTable.id, venueId)).limit(1);
+    if (!venue) {
+      res.status(404).json({ error: "not_found", message: "Venue not found" });
+      return;
+    }
+
     const today = new Date();
-    const fromDate = req.query.from
-      ? parseISO(req.query.from as string)
-      : today;
-    const toDate = req.query.to
-      ? parseISO(req.query.to as string)
-      : addDays(today, 13);
+    const fromDate = req.query.from ? parseISO(req.query.from as string) : today;
+    const toDate = req.query.to ? parseISO(req.query.to as string) : addDays(today, 13);
 
     const fromStr = format(fromDate, "yyyy-MM-dd");
     const toStr = format(toDate, "yyyy-MM-dd");
@@ -167,25 +176,31 @@ router.get("/venues/:venueId/slots", async (req, res) => {
     // Group by date
     const grouped: Record<string, typeof slots> = {};
     for (const slot of slots) {
-      const dateKey = slot.date;
-      if (!grouped[dateKey]) grouped[dateKey] = [];
-      grouped[dateKey].push(slot);
+      if (!grouped[slot.date]) grouped[slot.date] = [];
+      grouped[slot.date].push(slot);
     }
 
     const result = Object.entries(grouped)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, daySlots]) => ({
         date,
-        slots: daySlots.map((s) => ({
-          id: s.id,
-          venueId: s.venueId,
-          date: s.date,
-          startTime: s.startTime,
-          endTime: s.endTime,
-          priceOverride: s.priceOverride ? Number(s.priceOverride) : null,
-          status: s.status,
-          sport: s.sport ?? null,
-        })),
+        slots: daySlots.map((s) => {
+          const computedPrice = computeVenueSlotPrice(venue, s);
+          // Blocked slots surface as "unavailable" to clients
+          const effectiveStatus = s.isBlockedByOwner ? "unavailable" : s.status;
+          return {
+            id: s.id,
+            venueId: s.venueId,
+            date: s.date,
+            startTime: s.startTime,
+            endTime: s.endTime,
+            priceOverride: s.priceOverride ? Number(s.priceOverride) : null,
+            computedPrice,
+            status: effectiveStatus,
+            isBlockedByOwner: s.isBlockedByOwner,
+            sport: s.sport ?? null,
+          };
+        }),
       }));
 
     res.json(result);

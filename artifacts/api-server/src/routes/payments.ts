@@ -7,8 +7,10 @@ import {
   bookingsTable,
   hostedMatchesTable,
   profilesTable,
+  venuesTable,
+  slotsTable,
 } from "@workspace/db";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, inArray } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 import { razorpay, verifyRazorpaySignature, getRazorpayKeyId } from "../lib/razorpay";
 import { processReferralRewards, processFirstBookingCashback, processFirstMatchCashback } from "../lib/wallet";
@@ -19,9 +21,36 @@ import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
+// ─── Shared helpers ────────────────────────────────────────────────────────────
+
+function computeVenueSlotPrice(
+  venue: typeof venuesTable.$inferSelect,
+  slot: typeof slotsTable.$inferSelect,
+): number {
+  if (slot.priceOverride != null) return Number(slot.priceOverride);
+  const date = new Date(slot.date);
+  const dayOfWeek = date.getDay(); // 0=Sun, 6=Sat
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  if (isWeekend) return venue.weekendPrice;
+  const hour = parseInt(slot.startTime.split(":")[0]!, 10);
+  if (hour < 10) return venue.weekdayMorningPrice;
+  if (hour < 17) return venue.weekdayDayPrice;
+  return venue.weekdayEveningPrice;
+}
+
+function validateConsecutiveSlots(slots: typeof slotsTable.$inferSelect[]): boolean {
+  if (slots.length === 0) return false;
+  const sorted = [...slots].sort((a, b) => a.startTime.localeCompare(b.startTime));
+  for (let i = 0; i < sorted.length - 1; i++) {
+    if (sorted[i]!.date !== sorted[i + 1]!.date) return false;
+    if (sorted[i]!.endTime !== sorted[i + 1]!.startTime) return false;
+  }
+  return true;
+}
+
 // ─── POST /payments/create-order ─────────────────────────────────────────────
-// C2: wallet amount is clamped server-side against real DB balance.
-// Client-supplied walletAmountUsed is treated as a hint, never trusted directly.
+// For type="booking": server fetches + prices all slotIds independently.
+// For other types: amount from client is used (existing behavior preserved).
 router.post("/payments/create-order", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -31,30 +60,70 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
       return;
     }
 
-    const { type, referenceId, amount: rawAmount, walletAmountUsed: clientWalletHint = 0 } = req.body;
-    const totalAmount = Number(rawAmount);
+    const { type, referenceId, amount: rawAmount, walletAmountUsed: clientWalletHint = 0, venueId, slotIds } = req.body;
 
-    if (!totalAmount || totalAmount <= 0) {
-      res.status(400).json({ error: "validation", message: "amount must be a positive number" });
-      return;
-    }
-
-    // C2: Re-read wallet balance from DB — never trust client-supplied value
+    // ── Re-read wallet balance — never trust client value ──
     const [freshProfile] = await db
       .select({ walletBalance: profilesTable.walletBalance, walletAutoUse: profilesTable.walletAutoUse })
       .from(profilesTable)
       .where(eq(profilesTable.id, profile.id))
       .limit(1);
-
     const actualBalance = Number(freshProfile?.walletBalance ?? 0);
 
-    // Clamp: cannot use more than balance, more than total, or more than client requested
-    const serverApprovedWalletUse = Math.min(
-      Number(clientWalletHint),
-      actualBalance,
-      totalAmount,
-    );
+    let totalAmount: number;
 
+    if (type === "booking") {
+      // ── Server-side pricing for booking orders ─────────────────────────────
+      if (!venueId || !Array.isArray(slotIds) || slotIds.length === 0) {
+        res.status(400).json({ error: "validation", message: "venueId and slotIds[] are required for booking orders" });
+        return;
+      }
+
+      const [venue] = await db.select().from(venuesTable).where(eq(venuesTable.id, venueId)).limit(1);
+      if (!venue) {
+        res.status(404).json({ error: "not_found", message: "Venue not found" });
+        return;
+      }
+
+      const slots = await db.select().from(slotsTable).where(inArray(slotsTable.id, slotIds as string[]));
+
+      if (slots.length !== (slotIds as string[]).length) {
+        res.status(404).json({ error: "not_found", message: "One or more slots not found" });
+        return;
+      }
+
+      // All slots must belong to this venue
+      if (slots.some((s) => s.venueId !== venueId)) {
+        res.status(400).json({ error: "validation", message: "All slots must belong to the specified venue" });
+        return;
+      }
+
+      // All slots must be available and not owner-blocked
+      const blockedOrUnavailable = slots.filter((s) => s.isBlockedByOwner || s.status !== "available");
+      if (blockedOrUnavailable.length > 0) {
+        res.status(409).json({ error: "slot_unavailable", message: "One or more slots are not available" });
+        return;
+      }
+
+      // Slots must be consecutive
+      if (!validateConsecutiveSlots(slots)) {
+        res.status(400).json({ error: "validation", message: "Slots must be consecutive and on the same day" });
+        return;
+      }
+
+      // Server-computed total
+      totalAmount = slots.reduce((sum, s) => sum + computeVenueSlotPrice(venue, s), 0);
+    } else {
+      // ── Non-booking types: use client-supplied amount (existing behavior) ──
+      totalAmount = Number(rawAmount);
+      if (!totalAmount || totalAmount <= 0) {
+        res.status(400).json({ error: "validation", message: "amount must be a positive number" });
+        return;
+      }
+    }
+
+    // Clamp wallet use
+    const serverApprovedWalletUse = Math.min(Number(clientWalletHint), actualBalance, totalAmount);
     const razorpayAmount = Math.max(0, totalAmount - serverApprovedWalletUse);
 
     if (!razorpay) {
@@ -68,12 +137,12 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
         prefillContact: profile.phone ?? null,
         walletAmountUsed: serverApprovedWalletUse,
         fullWallet: razorpayAmount === 0,
+        computedGrossAmount: totalAmount,
       });
       return;
     }
 
     if (razorpayAmount === 0) {
-      // Full wallet payment — no Razorpay needed
       const [payment] = await db.insert(paymentsTable).values({
         userId: profile.id,
         type,
@@ -94,6 +163,7 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
         walletAmountUsed: serverApprovedWalletUse,
         fullWallet: true,
         paymentId: payment.id,
+        computedGrossAmount: totalAmount,
       });
       return;
     }
@@ -123,6 +193,7 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
       prefillContact: profile.phone ?? null,
       walletAmountUsed: serverApprovedWalletUse,
       fullWallet: false,
+      computedGrossAmount: totalAmount,
     });
   } catch (err) {
     req.log.error({ err }, "Error creating payment order");
@@ -131,10 +202,6 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
 });
 
 // ─── POST /payments/verify ────────────────────────────────────────────────────
-// C1: All post-payment commerce (payout, cashback, referral) is awaited inside
-// the request lifecycle before res.json(). No setImmediate / fire-and-forget.
-// Non-critical steps (notifications, analytics) are individually try/caught so
-// a notification failure never aborts the financial steps.
 router.post("/payments/verify", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -144,13 +211,7 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
       return;
     }
 
-    const {
-      razorpayOrderId,
-      razorpayPaymentId,
-      razorpaySignature,
-      type,
-      referenceId,
-    } = req.body;
+    const { razorpayOrderId, razorpayPaymentId, razorpaySignature, type, referenceId } = req.body;
 
     const [existing] = await db
       .select()
@@ -174,12 +235,7 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
     if (existing) {
       const [updated] = await db
         .update(paymentsTable)
-        .set({
-          razorpayPaymentId,
-          razorpaySignature,
-          status: "success",
-          updatedAt: new Date(),
-        })
+        .set({ razorpayPaymentId, razorpaySignature, status: "success", updatedAt: new Date() })
         .where(eq(paymentsTable.id, existing.id))
         .returning();
       payment = updated;
@@ -202,14 +258,9 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
 
     await maybeMarkParticipantPaid(type, referenceId, profile.id);
 
-    // ── C1: Post-payment commerce — awaited before response ──────────────────
-    // Financial steps (payout, cashback, referral) must complete before we
-    // respond. Notifications and analytics are best-effort — failures are
-    // logged but do not abort the response.
     const amount = Number(payment.amount);
 
     if (type === "booking" && referenceId) {
-      // Financial — must succeed
       const [booking] = await db
         .select({ venueId: bookingsTable.venueId })
         .from(bookingsTable)
@@ -220,7 +271,6 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
       }
       await processFirstBookingCashback(profile.id, referenceId);
       await processReferralRewards(profile.id);
-      // Non-critical
       try { await trackEvent(EVENTS.BOOKING_PAID, profile.id, { referenceId, amount }); } catch (e) { logger.warn({ err: e }, "analytics track failed"); }
       try {
         await createNotification({
@@ -234,7 +284,6 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
     }
 
     if (type === "host_commitment" && referenceId) {
-      // Financial — must succeed
       const [match] = await db
         .select({ venueId: hostedMatchesTable.venueId })
         .from(hostedMatchesTable)
@@ -245,7 +294,6 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
       }
       await processFirstMatchCashback(profile.id, referenceId);
       await processReferralRewards(profile.id);
-      // Non-critical
       try { await trackEvent(EVENTS.HOST_MATCH_PAID, profile.id, { referenceId, amount }); } catch (e) { logger.warn({ err: e }, "analytics track failed"); }
       try {
         await createNotification({
@@ -259,9 +307,7 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
     }
 
     if (type === "match_reserve" && referenceId) {
-      // Financial — must succeed
       await processReferralRewards(profile.id);
-      // Non-critical
       try { await trackEvent(EVENTS.RESERVE_JOIN_PAID, profile.id, { referenceId, amount }); } catch (e) { logger.warn({ err: e }, "analytics track failed"); }
       try {
         await createNotification({
@@ -275,7 +321,6 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
     }
 
     if (type === "match_final" && referenceId) {
-      // Financial — must succeed
       const [match] = await db
         .select({ venueId: hostedMatchesTable.venueId, finalFeePerPlayer: hostedMatchesTable.finalFeePerPlayer })
         .from(hostedMatchesTable)
@@ -284,7 +329,6 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
       if (match) {
         await generateMatchPayout(match.venueId, referenceId, Number(match.finalFeePerPlayer));
       }
-      // Non-critical
       try { await trackEvent(EVENTS.FINAL_PAYMENT_PAID, profile.id, { referenceId, amount }); } catch (e) { logger.warn({ err: e }, "analytics track failed"); }
       try {
         await createNotification({
@@ -356,7 +400,6 @@ router.get("/payments/history", requireAuth, async (req, res) => {
   }
 });
 
-// ─── List pending/stuck orders for current user ────────────────────────────
 router.get("/payments/pending", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -385,7 +428,6 @@ router.get("/payments/pending", requireAuth, async (req, res) => {
   }
 });
 
-// ─── Idempotent retry-verify for stuck/abandoned orders ───────────────────
 router.post("/payments/retry-verify", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -428,7 +470,6 @@ router.post("/payments/retry-verify", requireAuth, async (req, res) => {
       await maybeMarkParticipantPaid(existing.type, existing.referenceId, profile.id);
       res.json({ success: true, alreadyVerified: false, paymentId: updated.id, type: updated.type, referenceId: updated.referenceId });
     } else {
-      // Return the pending order details so client can re-open Razorpay
       res.json({
         success: false,
         pending: true,
