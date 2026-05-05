@@ -48,4 +48,8 @@ Thumbs.db
 .cache/
 .local/
 
+# Environment files
+.env
+.env.production
+
 .env
