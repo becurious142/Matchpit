@@ -105,6 +105,8 @@ export interface Slot {
   priceOverride?: number | null;
   status: SlotStatus;
   sport?: string | null;
+  computedPrice?: number;
+  isBlockedByOwner?: boolean;
 }
 
 export interface SlotDay {
@@ -135,11 +137,15 @@ export interface Booking {
   paymentId?: string | null;
   venue?: Venue | null;
   createdAt: string;
+  durationHours?: number;
+  slotCount?: number;
+  memberPrice?: number | null;
+  walletCreditEarned?: number;
 }
 
 export interface CreateBookingBody {
   venueId: string;
-  slotId: string;
+  slotIds: string[];
   sport: string;
   razorpayOrderId: string;
   razorpayPaymentId: string;
@@ -272,6 +278,15 @@ export interface CreatePaymentOrderBody {
   type: CreatePaymentOrderBodyType;
   referenceId: string;
   amount: number;
+  venueId?: string;
+  slotIds?: string[];
+  walletAmountUsed?: number;
+}
+
+export interface CreatePaymentOrderResponse {
+  computedGrossAmount?: number;
+  walletAmountUsed?: number;
+  existingOrder?: boolean;
 }
 
 export interface PaymentOrder {
