@@ -17,7 +17,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/80 backdrop-blur-md">
         <div className="container flex h-16 items-center justify-between mx-auto px-4">
           <Link href="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center overflow-hidden">
+            <div className="w-8 h-8 rounded-lg bg-green-500 flex items-center justify-center overflow-hidden">
               <svg width="28" height="28" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <ellipse cx="90" cy="90" rx="70" ry="55" stroke="black" strokeWidth="12" fill="none"/>
                 <line x1="90" y1="35" x2="90" y2="145" stroke="black" strokeWidth="10"/>
