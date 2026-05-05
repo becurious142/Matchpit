@@ -1,0 +1,53 @@
+import {
+  pgTable,
+  text,
+  numeric,
+  timestamp,
+  uuid,
+  pgEnum,
+} from "drizzle-orm/pg-core";
+import { createInsertSchema, createSelectSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+import { venuesTable } from "./venues";
+
+export const payoutStatusEnum = pgEnum("payout_status", [
+  "pending",
+  "paid",
+  "hold",
+]);
+
+export const venuePayoutLedgerTable = pgTable("venue_payout_ledger", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  venueId: uuid("venue_id")
+    .notNull()
+    .references(() => venuesTable.id),
+  referenceId: uuid("reference_id"),
+  referenceType: text("reference_type").notNull(),
+  grossAmount: numeric("gross_amount", { precision: 10, scale: 2 }).notNull(),
+  razorpayFee: numeric("razorpay_fee", { precision: 10, scale: 2 })
+    .notNull()
+    .default("0"),
+  platformCommission: numeric("platform_commission", {
+    precision: 10,
+    scale: 2,
+  })
+    .notNull()
+    .default("0"),
+  venuePayable: numeric("venue_payable", { precision: 10, scale: 2 }).notNull(),
+  status: payoutStatusEnum("status").notNull().default("pending"),
+  paidAt: timestamp("paid_at"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertVenuePayoutSchema = createInsertSchema(
+  venuePayoutLedgerTable,
+).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const selectVenuePayoutSchema = createSelectSchema(venuePayoutLedgerTable);
+
+export type InsertVenuePayout = z.infer<typeof insertVenuePayoutSchema>;
+export type VenuePayout = typeof venuePayoutLedgerTable.$inferSelect;

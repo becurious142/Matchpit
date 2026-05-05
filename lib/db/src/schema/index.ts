@@ -1,20 +1,29 @@
-// Export your models here. Add one export per file
-// export * from "./posts";
-//
-// Each model/table should ideally be split into different files.
-// Each model/table should define a Drizzle table, insert schema, and types:
-//
-//   import { pgTable, text, serial } from "drizzle-orm/pg-core";
-//   import { createInsertSchema } from "drizzle-zod";
-//   import { z } from "zod/v4";
-//
-//   export const postsTable = pgTable("posts", {
-//     id: serial("id").primaryKey(),
-//     title: text("title").notNull(),
-//   });
-//
-//   export const insertPostSchema = createInsertSchema(postsTable).omit({ id: true });
-//   export type InsertPost = z.infer<typeof insertPostSchema>;
-//   export type Post = typeof postsTable.$inferSelect;
-
-export {}
+export * from "./cities";
+export * from "./profiles";
+export * from "./venues";
+export * from "./slots";
+export * from "./bookings";
+export * from "./payments";
+export * from "./hosted-matches";
+export * from "./hosted-match-participants";
+export * from "./wallet-ledger";
+export * from "./notifications";
+export * from "./owner-leads";
+export * from "./badges";
+export * from "./coupons";
+export * from "./venue-payouts";
+export * from "./reward-events";
+export * from "./user-stats";
+export * from "./referral-config";
+export * from "./platform-revenue";
+export * from "./community-posts";
+export * from "./community-post-comments";
+export * from "./community-post-likes";
+export * from "./squads";
+export * from "./player-follows";
+export * from "./match-messages";
+export * from "./test-invites";
+export * from "./notification-dispatch-logs";
+export * from "./analytics-events";
+export * from "./user-reports";
+export * from "./user-strikes";
