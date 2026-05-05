@@ -91,15 +91,17 @@ router.get("/profile/me", requireAuth, async (req, res) => {
     const { userId } = getAuth(req);
     const clerkUser = (req as any).auth?.sessionClaims as Record<string, unknown> | undefined;
 
-    const { email, fullName } = await extractEmailAndName(userId!, clerkUser);
+    const { email: rawEmail, fullName } = await extractEmailAndName(userId!, clerkUser);
 
-    if (!email) {
-      req.log.error({ userId }, "Could not determine email for user — Clerk API lookup failed");
-      res.status(500).json({ error: "internal_error", message: "Could not retrieve user email from Clerk" });
-      return;
+    // Graceful fallback: if Clerk Backend is unreachable (e.g. missing secret key
+    // in local dev), use a deterministic placeholder so the profile row is always
+    // created. The real email can be backfilled once Clerk is reachable.
+    const email = rawEmail || `clerk:${userId}@noemail.local`;
+    if (!rawEmail) {
+      req.log.warn({ userId }, "Could not retrieve email from Clerk — using placeholder");
     }
 
-    const profile = await getOrCreateProfile(userId!, email, fullName);
+    const profile = await getOrCreateProfile(userId!, email, fullName || "Player");
 
     // Fire signup bonus for new users (idempotent)
     await processSignupBonus(profile.id).catch(() => null);
