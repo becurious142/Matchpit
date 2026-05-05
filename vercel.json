@@ -4,13 +4,6 @@
   "outputDirectory": "dist",
   "installCommand": "pnpm install --frozen-lockfile",
   "framework": null,
-  "functions": {
-    "api/index.mjs": {
-      "runtime": "nodejs22.x",
-      "maxDuration": 10,
-      "memory": 512
-    }
-  },
   "rewrites": [
     {
       "source": "/api/(.*)",
