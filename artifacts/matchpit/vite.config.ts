@@ -41,7 +41,9 @@ export default defineConfig({
   },
   root: path.resolve(import.meta.dirname),
   build: {
-    outDir: path.resolve(import.meta.dirname, "dist"),
+    // Output to repo root /dist so Vercel's outputDirectory resolution is unambiguous.
+    // vercel.json#outputDirectory is set to "dist" (repo root relative).
+    outDir: path.resolve(import.meta.dirname, "../../dist"),
     emptyOutDir: true,
   },
   server: {

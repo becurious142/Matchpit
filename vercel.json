@@ -1,7 +1,7 @@
 {
   "version": 2,
   "buildCommand": "pnpm -w run build:vercel",
-  "outputDirectory": "artifacts/matchpit/dist",
+  "outputDirectory": "dist",
   "installCommand": "pnpm install --frozen-lockfile",
   "framework": null,
   "functions": {
