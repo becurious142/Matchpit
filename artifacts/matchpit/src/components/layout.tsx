@@ -1,7 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { UserButton, useUser, SignInButton, SignUpButton } from "@clerk/react";
 import { Bell, Home, MapPin, Trophy, PlusCircle, Activity } from "lucide-react";
-import { useListNotifications } from "@workspace/api-client-react";
+import { useListNotifications, useGetMyProfile } from "@workspace/api-client-react";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 
@@ -15,6 +15,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
     }
   });
   const unreadCount = isSignedIn ? (notificationsData?.filter(n => !n.isRead).length || 0) : 0;
+
+  const { data: profile } = useGetMyProfile({
+    query: {
+      enabled: !!isSignedIn
+    }
+  });
+  const isAdmin = profile?.isAdmin;
 
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background text-foreground pb-16 md:pb-0">
@@ -35,10 +42,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </Link>
           
           <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
-            <Link href="/venues" className={`transition-colors hover:text-primary ${location.startsWith('/venues') ? 'text-primary' : 'text-muted-foreground'}`}>Venues</Link>
-            <Link href="/matches" className={`transition-colors hover:text-primary ${location.startsWith('/matches') ? 'text-primary' : 'text-muted-foreground'}`}>Matches</Link>
-            <Link href="/host" className={`transition-colors hover:text-primary ${location.startsWith('/host') ? 'text-primary' : 'text-muted-foreground'}`}>Host</Link>
-            <Link href="/dashboard" className={`transition-colors hover:text-primary ${location.startsWith('/dashboard') ? 'text-primary' : 'text-muted-foreground'}`}>Dashboard</Link>
+            {isAdmin ? (
+              <Link href="/admin" className={`transition-colors hover:text-primary ${location.startsWith('/admin') ? 'text-primary' : 'text-muted-foreground'}`}>Admin Control Room</Link>
+            ) : (
+              <>
+                <Link href="/venues" className={`transition-colors hover:text-primary ${location.startsWith('/venues') ? 'text-primary' : 'text-muted-foreground'}`}>Venues</Link>
+                <Link href="/matches" className={`transition-colors hover:text-primary ${location.startsWith('/matches') ? 'text-primary' : 'text-muted-foreground'}`}>Matches</Link>
+                <Link href="/host" className={`transition-colors hover:text-primary ${location.startsWith('/host') ? 'text-primary' : 'text-muted-foreground'}`}>Host</Link>
+                <Link href="/dashboard" className={`transition-colors hover:text-primary ${location.startsWith('/dashboard') ? 'text-primary' : 'text-muted-foreground'}`}>Dashboard</Link>
+              </>
+            )}
           </nav>
 
           <div className="flex items-center gap-4">
@@ -74,28 +87,37 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Mobile Bottom Nav */}
       <nav className="md:hidden fixed bottom-0 w-full border-t border-border/40 bg-background/95 backdrop-blur z-50 flex justify-around items-center px-1 pb-safe" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 8px)" }}>
-        <Link href="/" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location === '/' ? 'text-primary' : 'text-muted-foreground'}`}>
-          <Home className="w-6 h-6 mb-0.5" />
-          <span className="text-[10px] font-medium">Home</span>
-        </Link>
-        <Link href="/venues" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location.startsWith('/venues') ? 'text-primary' : 'text-muted-foreground'}`}>
-          <MapPin className="w-6 h-6 mb-0.5" />
-          <span className="text-[10px] font-medium">Venues</span>
-        </Link>
-        <Link href="/host" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location.startsWith('/host') ? 'text-primary' : 'text-muted-foreground'}`}>
-          <div className="bg-primary text-black rounded-full p-2 -mt-5 border-4 border-background">
-            <PlusCircle className="w-6 h-6" />
-          </div>
-          <span className="text-[10px] font-medium mt-0.5">Host</span>
-        </Link>
-        <Link href="/matches" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location.startsWith('/matches') ? 'text-primary' : 'text-muted-foreground'}`}>
-          <Trophy className="w-6 h-6 mb-0.5" />
-          <span className="text-[10px] font-medium">Matches</span>
-        </Link>
-        <Link href="/dashboard" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location.startsWith('/dashboard') ? 'text-primary' : 'text-muted-foreground'}`}>
-          <Activity className="w-6 h-6 mb-0.5" />
-          <span className="text-[10px] font-medium">Dashboard</span>
-        </Link>
+        {isAdmin ? (
+          <Link href="/admin" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location.startsWith('/admin') ? 'text-primary' : 'text-muted-foreground'}`}>
+            <Activity className="w-6 h-6 mb-0.5" />
+            <span className="text-[10px] font-medium">Admin</span>
+          </Link>
+        ) : (
+          <>
+            <Link href="/" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location === '/' ? 'text-primary' : 'text-muted-foreground'}`}>
+              <Home className="w-6 h-6 mb-0.5" />
+              <span className="text-[10px] font-medium">Home</span>
+            </Link>
+            <Link href="/venues" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location.startsWith('/venues') ? 'text-primary' : 'text-muted-foreground'}`}>
+              <MapPin className="w-6 h-6 mb-0.5" />
+              <span className="text-[10px] font-medium">Venues</span>
+            </Link>
+            <Link href="/host" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location.startsWith('/host') ? 'text-primary' : 'text-muted-foreground'}`}>
+              <div className="bg-primary text-black rounded-full p-2 -mt-5 border-4 border-background">
+                <PlusCircle className="w-6 h-6" />
+              </div>
+              <span className="text-[10px] font-medium mt-0.5">Host</span>
+            </Link>
+            <Link href="/matches" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location.startsWith('/matches') ? 'text-primary' : 'text-muted-foreground'}`}>
+              <Trophy className="w-6 h-6 mb-0.5" />
+              <span className="text-[10px] font-medium">Matches</span>
+            </Link>
+            <Link href="/dashboard" className={`flex flex-col items-center min-w-[44px] min-h-[44px] justify-center py-1 ${location.startsWith('/dashboard') ? 'text-primary' : 'text-muted-foreground'}`}>
+              <Activity className="w-6 h-6 mb-0.5" />
+              <span className="text-[10px] font-medium">Dashboard</span>
+            </Link>
+          </>
+        )}
       </nav>
     </div>
   );

@@ -1621,6 +1621,61 @@ export default function Admin() {
                 )}
               </CardContent>
             </Card>
+
+            <h2 className="text-xl font-bold uppercase italic flex items-center gap-2 mb-4 mt-8">
+              <ShieldAlert className="w-5 h-5 text-destructive" /> Database Maintenance
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Card className="bg-destructive/5 border-destructive/20">
+                <CardContent className="p-5">
+                  <h3 className="font-bold uppercase text-sm mb-1 text-destructive">Regenerate Venue Slots</h3>
+                  <p className="text-xs text-muted-foreground mb-4">
+                    Clears future unbooked slots and regenerates 14 days of chronological inventory for all approved venues. Use this to fix duplicated or broken slots.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="font-bold uppercase w-full"
+                    disabled={seedRunning}
+                    onClick={async () => {
+                      setSeedRunning(true);
+                      try {
+                        const data = await adminFetch<any>("/admin/regenerate-slots", { method: "GET" });
+                        toast({ title: data.message ?? "Slots regenerated successfully" });
+                      } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
+                      finally { setSeedRunning(false); }
+                    }}
+                  >
+                    Fix Inventory
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-destructive/5 border-destructive/20">
+                <CardContent className="p-5">
+                  <h3 className="font-bold uppercase text-sm mb-1 text-destructive">Backfill Pricing & Intervals</h3>
+                  <p className="text-xs text-muted-foreground mb-4">
+                    Populates missing slotIntervalMins (60) and derived pricing tiers (1x, 0.8x, 1.25x, 1.4x) based on base pricePerHour. Run this after schema updates.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="font-bold uppercase w-full"
+                    disabled={seedRunning}
+                    onClick={async () => {
+                      setSeedRunning(true);
+                      try {
+                        const data = await adminFetch<any>("/admin/backfill-pricing", { method: "GET" });
+                        toast({ title: data.message ?? "Pricing backfilled successfully" });
+                      } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
+                      finally { setSeedRunning(false); }
+                    }}
+                  >
+                    Fix Pricing Setup
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </TabsContent>
 

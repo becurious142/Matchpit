@@ -9,7 +9,7 @@ import {
   paymentsTable,
   ownerLeadsTable,
 } from "@workspace/db";
-import { eq, count, sum, desc, inArray } from "drizzle-orm";
+import { eq, count, sum, desc, inArray, ne } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 
 const router: IRouter = Router();
@@ -30,7 +30,7 @@ router.get("/admin/stats", requireAuth, async (req, res) => {
     if (!admin) return;
 
     const [users, venues, bookings, matches, payments, ownerLeads] = await Promise.all([
-      db.select({ count: count() }).from(profilesTable),
+      db.select({ count: count() }).from(profilesTable).where(ne(profilesTable.isAdmin, true)),
       db.select({ count: count() }).from(venuesTable),
       db.select({ count: count() }).from(bookingsTable),
       db.select({ count: count() }).from(hostedMatchesTable),
@@ -66,8 +66,8 @@ router.get("/admin/users", requireAuth, async (req, res) => {
     const limit = Math.min(100, parseInt(req.query.limit as string ?? "20"));
     const offset = (page - 1) * limit;
 
-    const users = await db.select().from(profilesTable).orderBy(desc(profilesTable.createdAt)).limit(limit).offset(offset);
-    const [{ count: total }] = await db.select({ count: count() }).from(profilesTable);
+    const users = await db.select().from(profilesTable).where(ne(profilesTable.isAdmin, true)).orderBy(desc(profilesTable.createdAt)).limit(limit).offset(offset);
+    const [{ count: total }] = await db.select({ count: count() }).from(profilesTable).where(ne(profilesTable.isAdmin, true));
 
     res.json({
       users: users.map((u) => ({
