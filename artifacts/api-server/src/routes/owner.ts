@@ -8,7 +8,7 @@ import {
   venuePayoutLedgerTable,
   slotsTable,
 } from "@workspace/db";
-import { eq, and, gte, sum, count, desc } from "drizzle-orm";
+import { eq, and, gte, lte, sum, count, desc, sql } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 
 const router: IRouter = Router();
@@ -181,4 +181,104 @@ router.get("/owner/payouts", requireAuth, async (req, res) => {
   }
 });
 
+// ─── POST /owner/venues/:venueId/slots/block ──────────────────────────────────
+// Bulk-blocks all slots in a date/time range for the authenticated owner.
+router.post("/owner/venues/:venueId/slots/block", requireAuth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const profile = await getProfileByClerkId(userId!);
+    if (!profile) { res.status(404).json({ error: "not_found", message: "Profile not found" }); return; }
+
+    const venueId = req.params.venueId as string;
+    const { date, startTime, endTime } = req.body as { date?: string; startTime?: string; endTime?: string };
+
+    if (!date || !startTime || !endTime) {
+      res.status(400).json({ error: "validation", message: "date, startTime, and endTime are required" });
+      return;
+    }
+
+    // Verify venue belongs to current owner
+    const [venue] = await db
+      .select({ id: venuesTable.id })
+      .from(venuesTable)
+      .where(and(eq(venuesTable.id, venueId), eq(venuesTable.ownerUserId, profile.id)))
+      .limit(1);
+
+    if (!venue) {
+      res.status(403).json({ error: "forbidden", message: "Venue not found or not owned by you" });
+      return;
+    }
+
+    // Bulk update: mark all matching slots as blocked and unavailable
+    const result = await db.execute(
+      sql`UPDATE ${slotsTable}
+          SET is_blocked_by_owner = true,
+              status = 'unavailable',
+              updated_at = NOW()
+          WHERE venue_id = ${venueId}::uuid
+            AND date = ${date}
+            AND start_time >= ${startTime}
+            AND end_time <= ${endTime}`,
+    );
+
+    const countBlocked = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+    res.json({ countBlocked });
+  } catch (err) {
+    req.log.error({ err }, "Error blocking owner slots");
+    res.status(500).json({ error: "internal_error", message: "Failed to block slots" });
+  }
+});
+
+// ─── POST /owner/venues/:venueId/slots/unblock ────────────────────────────────
+// Bulk-unblocks slots in a date/time range, restoring only non-booked/non-held slots.
+router.post("/owner/venues/:venueId/slots/unblock", requireAuth, async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const profile = await getProfileByClerkId(userId!);
+    if (!profile) { res.status(404).json({ error: "not_found", message: "Profile not found" }); return; }
+
+    const venueId = req.params.venueId as string;
+    const { date, startTime, endTime } = req.body as { date?: string; startTime?: string; endTime?: string };
+
+    if (!date || !startTime || !endTime) {
+      res.status(400).json({ error: "validation", message: "date, startTime, and endTime are required" });
+      return;
+    }
+
+    // Verify venue belongs to current owner
+    const [venue] = await db
+      .select({ id: venuesTable.id })
+      .from(venuesTable)
+      .where(and(eq(venuesTable.id, venueId), eq(venuesTable.ownerUserId, profile.id)))
+      .limit(1);
+
+    if (!venue) {
+      res.status(403).json({ error: "forbidden", message: "Venue not found or not owned by you" });
+      return;
+    }
+
+    // Bulk update: clear block flag; only restore status to 'available' if not booked/held
+    const result = await db.execute(
+      sql`UPDATE ${slotsTable}
+          SET is_blocked_by_owner = false,
+              status = CASE
+                WHEN status NOT IN ('booked', 'held') THEN 'available'
+                ELSE status
+              END,
+              updated_at = NOW()
+          WHERE venue_id = ${venueId}::uuid
+            AND date = ${date}
+            AND start_time >= ${startTime}
+            AND end_time <= ${endTime}`,
+    );
+
+    const countUnblocked = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+    res.json({ countUnblocked });
+  } catch (err) {
+    req.log.error({ err }, "Error unblocking owner slots");
+    res.status(500).json({ error: "internal_error", message: "Failed to unblock slots" });
+  }
+});
+
 export default router;
+
