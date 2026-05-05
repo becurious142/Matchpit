@@ -6,15 +6,9 @@
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
-    "build:api": "tsc --build tsconfig.json && pnpm --filter @workspace/api-server run build",
-    "start:api:prod": "node --enable-source-maps artifacts/api-server/dist/index.mjs",
-    "build:vercel": "tsc --build tsconfig.json && node build.vercel.mjs && node -e \"require('fs').mkdirSync('dist', {recursive:true})\" && pnpm --filter @workspace/matchpit run build"
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
   "private": true,
-  "engines": {
-    "node": ">=22"
-  },
   "devDependencies": {
     "typescript": "~5.9.2",
     "prettier": "^3.8.1"
