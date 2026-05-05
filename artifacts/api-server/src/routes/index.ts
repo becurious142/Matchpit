@@ -21,6 +21,7 @@ import paymentsWebhookRouter from "./payments-webhook";
 import moderationRouter from "./moderation";
 import adminSeedRouter from "./admin-seed";
 import adminAnalyticsRouter from "./admin-analytics";
+import adminMaintenanceRouter from "./admin-maintenance";
 
 const router: IRouter = Router();
 
@@ -43,6 +44,7 @@ router.use(adminRouter);
 router.use(adminExtendedRouter);
 router.use(adminSeedRouter);
 router.use(adminAnalyticsRouter);
+router.use(adminMaintenanceRouter);
 router.use(moderationRouter);
 router.use(communityRouter);
 router.use(squadsRouter);
