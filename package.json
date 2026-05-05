@@ -9,9 +9,12 @@
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
     "build:api": "tsc --build tsconfig.json && pnpm --filter @workspace/api-server run build",
     "start:api:prod": "node --enable-source-maps artifacts/api-server/dist/index.mjs",
-    "build:vercel": "tsc --build tsconfig.json && node build.vercel.mjs && pnpm --filter @workspace/matchpit run build"
+    "build:vercel": "tsc --build tsconfig.json && node build.vercel.mjs && node -e \"require('fs').mkdirSync('dist', {recursive:true})\" && pnpm --filter @workspace/matchpit run build"
   },
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "devDependencies": {
     "typescript": "~5.9.2",
     "prettier": "^3.8.1"
