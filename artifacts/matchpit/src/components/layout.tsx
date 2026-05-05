@@ -9,7 +9,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { isSignedIn } = useUser();
   const [location] = useLocation();
 
-  const { data: notificationsData } = useListNotifications();
+  const { data: notificationsData } = useListNotifications({
+    query: {
+      enabled: !!isSignedIn
+    }
+  });
   const unreadCount = isSignedIn ? (notificationsData?.filter(n => !n.isRead).length || 0) : 0;
 
   return (

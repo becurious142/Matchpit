@@ -37,12 +37,67 @@ function formatProfile(p: typeof profilesTable.$inferSelect) {
   };
 }
 
+/**
+ * Extract email and full name from Clerk session claims.
+ *
+ * Clerk's JWT session token does NOT include `email` by default —
+ * you must add it via "Customize session token" in the Clerk dashboard.
+ * For Google OAuth users this means the claims are often empty.
+ *
+ * Strategy:
+ * 1. Try well-known claim keys (works if session token is customized).
+ * 2. Fall back to the Clerk Backend API (guaranteed, one extra network hop).
+ */
+async function extractEmailAndName(
+  userId: string,
+  clerkUser: Record<string, unknown> | null | undefined
+): Promise<{ email: string; fullName: string }> {
+  // Try session claims first (fastest, no network request)
+  const claimsEmail =
+    (clerkUser?.email as string) ||
+    (clerkUser?.primaryEmail as string) ||
+    ((clerkUser?.email_addresses as { email_address: string }[])?.[0]?.email_address) ||
+    "";
+
+  const claimsName =
+    (clerkUser?.name as string) ||
+    (clerkUser?.fullName as string) ||
+    (clerkUser?.full_name as string) ||
+    [clerkUser?.first_name, clerkUser?.last_name].filter(Boolean).join(" ") ||
+    "";
+
+  if (claimsEmail) {
+    return { email: claimsEmail, fullName: claimsName || "Player" };
+  }
+
+  // Fallback: fetch from Clerk Backend API (needed when email is not in JWT claims)
+  try {
+    const { createClerkClient } = await import("@clerk/backend");
+    const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+    const clerkUserData = await clerkClient.users.getUser(userId);
+    const email = clerkUserData.emailAddresses?.[0]?.emailAddress ?? "";
+    const fullName =
+      [clerkUserData.firstName, clerkUserData.lastName].filter(Boolean).join(" ") ||
+      clerkUserData.username ||
+      "Player";
+    return { email, fullName };
+  } catch {
+    return { email: "", fullName: claimsName || "Player" };
+  }
+}
+
 router.get("/profile/me", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
-    const clerkUser = (req as any).auth?.sessionClaims;
-    const email = clerkUser?.email ?? clerkUser?.primaryEmail ?? "";
-    const fullName = clerkUser?.name ?? clerkUser?.fullName ?? "Player";
+    const clerkUser = (req as any).auth?.sessionClaims as Record<string, unknown> | undefined;
+
+    const { email, fullName } = await extractEmailAndName(userId!, clerkUser);
+
+    if (!email) {
+      req.log.error({ userId }, "Could not determine email for user — Clerk API lookup failed");
+      res.status(500).json({ error: "internal_error", message: "Could not retrieve user email from Clerk" });
+      return;
+    }
 
     const profile = await getOrCreateProfile(userId!, email, fullName);
 
