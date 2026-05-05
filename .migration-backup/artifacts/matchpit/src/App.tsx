@@ -108,7 +108,7 @@ function Router() {
         <Route path="/" component={Home} />
         <Route path="/venues" component={Venues} />
         <Route path="/venues/:id" component={VenueDetail} />
-        <Route path="/book/:venueId/:slotId" component={() => <ProtectedRoute component={Book} />} />
+        <Route path="/book/:venueId" component={() => <ProtectedRoute component={Book} />} />
         <Route path="/matches" component={Matches} />
         <Route path="/matches/:id" component={MatchDetail} />
         <Route path="/host" component={() => <ProtectedRoute component={HostMatch} />} />

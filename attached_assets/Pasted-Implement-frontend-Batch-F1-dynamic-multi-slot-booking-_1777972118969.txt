@@ -1,0 +1,102 @@
+Implement frontend Batch F1 — dynamic multi-slot booking UX.
+
+Modify ONLY:
+1. artifacts/matchpit/src/pages/venue-detail.tsx
+2. artifacts/matchpit/src/pages/book.tsx
+
+Do not touch any other files.
+
+========================================================
+A. venue-detail.tsx rewrite slot selection behavior
+========================================================
+
+Current behavior instantly redirects on single slot click. Remove that.
+
+Implement:
+
+1. local state:
+- selectedSlotIds: string[]
+
+2. user can tap available slots to build a consecutive selection only:
+- first tap selects first slot
+- next tap may only extend consecutively forward/backward on same date
+- tapping a selected edge can shrink selection
+- tapping a non-consecutive slot resets selection to that slot
+
+3. use slot.computedPrice (new backend field) for all displayed pricing, not priceOverride
+
+4. sticky bottom booking bar appears when selectedSlotIds.length > 0 showing:
+- selected startTime
+- selected endTime
+- durationHours
+- total computed selected price sum
+- button "Continue Booking"
+
+5. Continue Booking navigates to:
+
+/book/{venueId}?slots=id1,id2,id3
+
+(no more /book/:venueId/:slotId navigation)
+
+========================================================
+B. book.tsx full rewrite for new backend contract
+========================================================
+
+1. route should only require venueId param
+read selected slot ids from query string:
+?slots=id1,id2,id3
+
+2. fetch venue slots and resolve selectedSlots from ids
+
+3. compute on frontend display only:
+- startTime = first slot
+- endTime = last slot
+- durationHours = selectedSlots.length
+- venueCharge = sum(slot.computedPrice)
+
+4. REMOVE platform fee row entirely
+
+Replace payment summary with:
+- Venue charge
+- Wallet credit applied (if any)
+- Cashback you'll earn (3%)
+- Total payable
+
+5. create-order request body must now be:
+{
+  type: "booking",
+  venueId,
+  slotIds: selectedSlotIds,
+  walletAmountUsed
+}
+
+Use server returned computedGrossAmount + walletAmountUsed for final payable display sanity.
+
+6. create-booking request body must now be:
+{
+  venueId,
+  slotIds: selectedSlotIds,
+  sport,
+  razorpayOrderId,
+  razorpayPaymentId,
+  razorpaySignature,
+  walletAmountUsed
+}
+
+7. wallet-only flow must also use slotIds array.
+
+8. timings shown everywhere must use first selected startTime and last selected endTime.
+
+========================================================
+IMPORTANT UX NOTES
+========================================================
+
+- keep existing page design as much as possible
+- no giant redesign
+- just functional booking truth
+- all TS must pass
+
+Run:
+tsc --noEmit -p artifacts/matchpit/tsconfig.json
+
+Return completion report only.

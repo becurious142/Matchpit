@@ -1,23 +1,30 @@
-import { useParams, useLocation } from "wouter";
+import { useParams } from "wouter";
 import { useState } from "react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useGetVenue, useGetVenueSlots, useCreatePaymentOrder, useVerifyPayment, useCreateBooking } from "@workspace/api-client-react";
+import type { Slot } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { Calendar, Clock, MapPin, CheckCircle2, Wallet, Info } from "lucide-react";
+import { Calendar, Clock, MapPin, CheckCircle2, Wallet } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { loadRazorpay } from "@/lib/razorpay";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+
+type EnrichedSlot = Slot & { computedPrice?: number };
+type EnrichedSlotDay = { date: string; slots: EnrichedSlot[] };
 
 interface WalletData { balance: number; walletAutoUse: boolean; }
 
 export default function Book() {
-  const { venueId, slotId } = useParams<{ venueId: string, slotId: string }>();
-  const [, setLocation] = useLocation();
+  const { venueId } = useParams<{ venueId: string }>();
+
+  // Read slot IDs from query string — works regardless of wouter base path
+  const rawSearch = typeof window !== 'undefined' ? window.location.search : '';
+  const selectedSlotIds = new URLSearchParams(rawSearch).get('slots')?.split(',').filter(Boolean) ?? [];
+
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -26,10 +33,15 @@ export default function Book() {
   const [useWallet, setUseWallet] = useState<boolean | null>(null);
 
   const { data: venue, isLoading: loadingVenue } = useGetVenue(venueId!);
-  
+
   const fromDate = format(new Date(), 'yyyy-MM-dd');
   const { data: slotsData } = useGetVenueSlots(venueId!, { from: fromDate });
-  const slot = slotsData?.flatMap(d => d.slots).find(s => s.id === slotId);
+
+  const enrichedSlotsData = slotsData as EnrichedSlotDay[] | undefined;
+  const allSlots = enrichedSlotsData?.flatMap(d => d.slots) ?? [];
+  const selectedSlots = selectedSlotIds
+    .map(id => allSlots.find(s => s.id === id))
+    .filter((s): s is EnrichedSlot => s !== undefined);
 
   const { data: walletData } = useQuery<WalletData>({
     queryKey: ["wallet-mini"],
@@ -46,36 +58,46 @@ export default function Book() {
   const createBooking = useCreateBooking();
 
   const sport = selectedSport || (venue?.sports?.[0] ?? "");
-  const price = slot?.priceOverride || venue?.pricePerHour || 0;
-  const platformFee = 49;
-  const totalAmount = price + platformFee;
+
+  // Timings derived from selected slots
+  const startTime = selectedSlots[0]?.startTime ?? "";
+  const endTime = selectedSlots[selectedSlots.length - 1]?.endTime ?? "";
+  const slotDate = selectedSlots[0]?.date ?? "";
+  const durationHours = selectedSlots.length;
+
+  // Pricing — sum of server-computed prices per slot
+  const venueCharge = selectedSlots.reduce(
+    (acc, s) => acc + (s.computedPrice ?? s.priceOverride ?? venue?.pricePerHour ?? 0),
+    0
+  );
+  const cashbackAmount = Math.floor(venueCharge * 0.03);
 
   const walletBalance = walletData?.balance ?? 0;
   const walletEnabled = useWallet ?? (walletData?.walletAutoUse ?? false);
-  const walletAmountUsed = walletEnabled ? Math.min(walletBalance, totalAmount) : 0;
-  const razorpayAmount = Math.max(0, totalAmount - walletAmountUsed);
+  const walletAmountUsed = walletEnabled ? Math.min(walletBalance, venueCharge) : 0;
+  const totalPayable = Math.max(0, venueCharge - walletAmountUsed);
 
   const handleWalletOnlyPayment = async () => {
-    if (!venue || !slot) return;
+    if (!venue || selectedSlotIds.length === 0) return;
     setIsProcessing(true);
     try {
       await createBooking.mutateAsync({
         data: {
           venueId: venue.id,
-          slotId: slot.id,
+          slotIds: selectedSlotIds,
           sport,
           razorpayOrderId: `wallet_${Date.now()}`,
           razorpayPaymentId: "",
           razorpaySignature: "",
-          walletAmountUsed: totalAmount,
-        } as any
+          walletAmountUsed: venueCharge,
+        } as any,
       });
       await queryClient.invalidateQueries({ queryKey: ["bookings"] });
       await queryClient.invalidateQueries({ queryKey: ["getVenueSlots", venueId] });
       await queryClient.invalidateQueries({ queryKey: ["wallet"] });
       setIsSuccess(true);
       toast({ title: "Booking Confirmed! 🎯", description: "Paid with wallet balance." });
-      setTimeout(() => setLocation("/dashboard/bookings"), 3000);
+      setTimeout(() => { setRedirect(true); window.location.href = "/dashboard/bookings"; }, 3000);
     } catch (err: any) {
       toast({ title: "Error", description: err.message || "Failed to book", variant: "destructive" });
       setIsProcessing(false);
@@ -83,30 +105,27 @@ export default function Book() {
   };
 
   const handlePayment = async () => {
-    if (!venue || !slot) return;
+    if (!venue || selectedSlotIds.length === 0) return;
 
-    if (razorpayAmount === 0) {
+    if (totalPayable === 0) {
       await handleWalletOnlyPayment();
       return;
     }
-    
+
     setIsProcessing(true);
     try {
       const order = await createPaymentOrder.mutateAsync({
         data: {
           type: "booking",
-          referenceId: slotId!,
-          amount: razorpayAmount
-        }
+          venueId: venue.id,
+          slotIds: selectedSlotIds,
+          walletAmountUsed: walletAmountUsed > 0 ? walletAmountUsed : undefined,
+        } as any,
       });
 
-      // 2. Load razorpay
       const isLoaded = await loadRazorpay();
-      if (!isLoaded) {
-        throw new Error("Razorpay SDK failed to load");
-      }
+      if (!isLoaded) throw new Error("Razorpay SDK failed to load");
 
-      // 3. Open checkout
       const options = {
         key: order.razorpayKeyId,
         amount: order.amount,
@@ -117,37 +136,33 @@ export default function Book() {
         prefill: {
           name: order.prefillName || "",
           email: order.prefillEmail || "",
-          contact: order.prefillContact || ""
+          contact: order.prefillContact || "",
         },
-        theme: {
-          color: "#84cc16" // primary color
-        },
+        theme: { color: "#84cc16" },
         handler: async function (response: any) {
           try {
-            // 4. Verify payment
             await verifyPayment.mutateAsync({
               data: {
                 razorpayOrderId: response.razorpay_order_id,
                 razorpayPaymentId: response.razorpay_payment_id,
                 razorpaySignature: response.razorpay_signature,
                 type: "booking",
-                referenceId: slotId!
-              }
+                referenceId: venue.id,
+              },
             });
 
             await createBooking.mutateAsync({
               data: {
                 venueId: venue.id,
-                slotId: slot.id,
+                slotIds: selectedSlotIds,
                 sport,
                 razorpayOrderId: response.razorpay_order_id,
                 razorpayPaymentId: response.razorpay_payment_id,
                 razorpaySignature: response.razorpay_signature,
                 walletAmountUsed: walletAmountUsed > 0 ? walletAmountUsed : undefined,
-              } as any
+              } as any,
             });
 
-            // Invalidate stale queries so bookings + slots reflect new state
             await queryClient.invalidateQueries({ queryKey: ["bookings"] });
             await queryClient.invalidateQueries({ queryKey: ["getVenueSlots", venueId] });
 
@@ -156,20 +171,16 @@ export default function Book() {
               title: "Booking Confirmed! 🎯",
               description: "Your turf has been booked successfully.",
             });
-            
-            setTimeout(() => {
-              setLocation("/dashboard/bookings");
-            }, 3000);
-            
+            setTimeout(() => { window.location.href = "/dashboard/bookings"; }, 3000);
           } catch (err: any) {
             toast({
               title: "Verification failed",
               description: err.message || "Failed to verify payment",
-              variant: "destructive"
+              variant: "destructive",
             });
             setIsProcessing(false);
           }
-        }
+        },
       };
 
       const rzp = new (window as any).Razorpay(options);
@@ -178,18 +189,17 @@ export default function Book() {
         toast({
           title: "Payment Failed",
           description: response.error.description,
-          variant: "destructive"
+          variant: "destructive",
         });
       });
-      
+
       rzp.open();
-      
     } catch (err: any) {
       setIsProcessing(false);
       toast({
         title: "Error",
         description: err.message || "Failed to initialize payment",
-        variant: "destructive"
+        variant: "destructive",
       });
     }
   };
@@ -202,19 +212,28 @@ export default function Book() {
         <p className="text-muted-foreground text-lg max-w-md mb-8">
           Your booking at {venue?.name} is confirmed. We've sent the details to your email.
         </p>
-        <Button size="lg" className="font-bold px-8 uppercase italic" onClick={() => setLocation("/dashboard/bookings")}>
+        <Button size="lg" className="font-bold px-8 uppercase italic" onClick={() => { window.location.href = "/dashboard/bookings"; }}>
           View Bookings
         </Button>
       </div>
     );
   }
 
-  if (!venue || !slot) return null;
+  if (!loadingVenue && (!venue || selectedSlots.length === 0)) {
+    return (
+      <div className="text-center py-20 text-muted-foreground">
+        <p className="text-lg font-medium">No slots selected.</p>
+        <Button className="mt-4 font-bold uppercase italic" onClick={() => window.history.back()}>Go Back</Button>
+      </div>
+    );
+  }
+
+  if (!venue || selectedSlots.length === 0) return null;
 
   return (
     <div className="container mx-auto px-4 py-12 max-w-4xl">
       <h1 className="text-3xl font-extrabold uppercase italic mb-8">Checkout</h1>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         <div className="md:col-span-2 space-y-6">
           <Card className="bg-card/50 backdrop-blur border-border/50 overflow-hidden">
@@ -238,22 +257,40 @@ export default function Book() {
                   </div>
                 </div>
                 <div className="space-y-4">
-                  <div className="flex items-start gap-3">
-                    <Calendar className="w-5 h-5 text-primary mt-0.5" />
-                    <div>
-                      <p className="font-bold uppercase text-xs tracking-wider text-muted-foreground mb-1">Date</p>
-                      <p className="font-medium">{format(parseISO(slot.date), 'EEEE, MMMM do, yyyy')}</p>
+                  {slotDate && (
+                    <div className="flex items-start gap-3">
+                      <Calendar className="w-5 h-5 text-primary mt-0.5" />
+                      <div>
+                        <p className="font-bold uppercase text-xs tracking-wider text-muted-foreground mb-1">Date</p>
+                        <p className="font-medium">{format(parseISO(slotDate), 'EEEE, MMMM do, yyyy')}</p>
+                      </div>
                     </div>
-                  </div>
+                  )}
                   <div className="flex items-start gap-3">
                     <Clock className="w-5 h-5 text-primary mt-0.5" />
                     <div>
                       <p className="font-bold uppercase text-xs tracking-wider text-muted-foreground mb-1">Time</p>
-                      <p className="font-medium">{slot.startTime} to {slot.endTime}</p>
+                      <p className="font-medium">{startTime} to {endTime}</p>
+                      <p className="text-xs text-muted-foreground">{durationHours} hr{durationHours > 1 ? 's' : ''}</p>
                     </div>
                   </div>
                 </div>
               </div>
+
+              {/* Slot breakdown */}
+              {selectedSlots.length > 1 && (
+                <div className="mt-4 pt-4 border-t border-border/50">
+                  <p className="font-bold uppercase text-xs tracking-wider text-muted-foreground mb-3">Slot Breakdown</p>
+                  <div className="space-y-1">
+                    {selectedSlots.map(s => (
+                      <div key={s.id} className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">{s.startTime} – {s.endTime}</span>
+                        <span className="font-medium">₹{s.computedPrice ?? s.priceOverride ?? venue.pricePerHour}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -310,30 +347,13 @@ export default function Book() {
           <Card className="sticky top-24 bg-card border-border/50 shadow-xl">
             <CardContent className="p-6">
               <h3 className="font-bold uppercase tracking-wider mb-6">Payment Summary</h3>
-              
+
               <div className="space-y-3 text-sm mb-4">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Slot fee (1 hr)</span>
-                  <span className="font-medium">₹{price}</span>
-                </div>
-                <div className="flex justify-between items-start">
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-muted-foreground flex items-center gap-1">
-                      Platform fee
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Info className="w-3 h-3 cursor-help text-muted-foreground/60 hidden md:inline" />
-                        </TooltipTrigger>
-                        <TooltipContent side="left" className="max-w-[200px] text-xs">
-                          Covers app support, secure payments, and instant booking confirmation.
-                        </TooltipContent>
-                      </Tooltip>
-                    </span>
-                    <span className="text-[10px] text-muted-foreground/70 md:hidden">
-                      App support &amp; secure payments
-                    </span>
-                  </div>
-                  <span className="font-medium">₹{platformFee}</span>
+                  <span className="text-muted-foreground">
+                    Venue charge ({durationHours} hr{durationHours > 1 ? 's' : ''})
+                  </span>
+                  <span className="font-medium">₹{venueCharge}</span>
                 </div>
                 {walletAmountUsed > 0 && (
                   <div className="flex justify-between text-green-400">
@@ -341,10 +361,14 @@ export default function Book() {
                     <span className="font-bold">−₹{walletAmountUsed.toFixed(2)}</span>
                   </div>
                 )}
+                <div className="flex justify-between text-primary/80">
+                  <span>Cashback you'll earn (3%)</span>
+                  <span className="font-bold">+₹{cashbackAmount}</span>
+                </div>
                 <Separator className="my-2" />
                 <div className="flex justify-between text-lg font-bold">
-                  <span>Total due</span>
-                  <span className="text-primary">₹{razorpayAmount.toFixed(2)}</span>
+                  <span>Total payable</span>
+                  <span className="text-primary">₹{totalPayable.toFixed(2)}</span>
                 </div>
               </div>
 
@@ -365,17 +389,17 @@ export default function Book() {
                 </div>
               )}
 
-              <Button 
-                className="w-full h-14 text-lg font-bold uppercase italic shadow-lg shadow-primary/20" 
+              <Button
+                className="w-full h-14 text-lg font-bold uppercase italic shadow-lg shadow-primary/20"
                 size="lg"
                 onClick={handlePayment}
                 disabled={isProcessing}
               >
                 {isProcessing
                   ? "Processing..."
-                  : razorpayAmount === 0
+                  : totalPayable === 0
                   ? "Pay with Wallet"
-                  : `Pay ₹${razorpayAmount.toFixed(2)}`}
+                  : `Pay ₹${totalPayable.toFixed(2)}`}
               </Button>
               <p className="text-center text-xs text-muted-foreground mt-4">
                 Secure payments powered by Razorpay
