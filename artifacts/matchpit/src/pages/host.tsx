@@ -1,4 +1,5 @@
 import { useLocation } from "wouter";
+import { useAuth } from "@clerk/react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -33,6 +34,7 @@ const hostSchema = z.object({
 });
 
 export default function HostMatch() {
+  const { getToken } = useAuth();
   const [, setLocation] = useLocation();
   const searchParams = new URLSearchParams(window.location.search);
   const preselectedVenueId = searchParams.get("venue");
@@ -92,9 +94,13 @@ export default function HostMatch() {
       // ── SAFE ATOMIC FLOW ──────────────────────────────────────────────────
       // Step 1: Get a Razorpay order from the backend using real slot/venue data.
       //         No tempRefId — the backend validates slot availability here.
+      const token = await getToken();
       const orderRes = await fetch("/api/hosted-matches/create-order", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
           venueId: values.venueId,
           slotId: values.slotId,
