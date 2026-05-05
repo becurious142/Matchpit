@@ -43,9 +43,18 @@ interface Coupon {
 }
 
 async function adminFetch<T>(path: string, opts?: RequestInit): Promise<T> {
+  const headers: any = { "Content-Type": "application/json", ...(opts?.headers ?? {}) };
+  
+  if (typeof window !== "undefined" && (window as any).Clerk?.session) {
+    const token = await (window as any).Clerk.session.getToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+
   const res = await fetch(`/api${path}`, {
     ...opts,
-    headers: { "Content-Type": "application/json", ...(opts?.headers ?? {}) },
+    headers,
   });
   if (!res.ok) throw new Error((await res.json()).message ?? "Request failed");
   return res.json();
