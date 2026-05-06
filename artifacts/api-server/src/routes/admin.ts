@@ -11,6 +11,10 @@ import {
 } from "@workspace/db";
 import { eq, count, sum, desc, inArray, ne } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
+import {
+  regenerateVenueSlotsForNext14Days,
+  backfillVenuePricingDefaults,
+} from "../utils/regenerateVenueSlots";
 
 const router: IRouter = Router();
 
@@ -272,6 +276,8 @@ router.get("/admin/payments", requireAuth, async (req, res) => {
   }
 });
 
+// ─── Venue: approve (boolean toggle, kept for backwards compat) ───────────────
+
 router.patch("/admin/venues/:venueId/approve", requireAuth, async (req, res) => {
   try {
     const admin = await requireAdmin(req, res);
@@ -316,6 +322,38 @@ router.patch("/admin/venues/:venueId/approve", requireAuth, async (req, res) => 
     res.status(500).json({ error: "internal_error", message: "Failed to approve venue" });
   }
 });
+
+// ─── Venue: activate (sets isApproved=true and regenerates slots) ─────────────
+
+router.post("/admin/venues/:venueId/activate", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const venueId = req.params.venueId as string;
+
+    const [existing] = await db.select().from(venuesTable).where(eq(venuesTable.id, venueId));
+    if (!existing) {
+      res.status(404).json({ error: "not_found", message: "Venue not found" });
+      return;
+    }
+
+    await db
+      .update(venuesTable)
+      .set({ isApproved: true, updatedAt: new Date() })
+      .where(eq(venuesTable.id, venueId));
+
+    await backfillVenuePricingDefaults();
+    await regenerateVenueSlotsForNext14Days();
+
+    res.json({ activated: true, venueId });
+  } catch (err) {
+    req.log.error({ err }, "Error activating venue");
+    res.status(500).json({ error: "internal_error", message: "Failed to activate venue" });
+  }
+});
+
+// ─── Venue: featured ─────────────────────────────────────────────────────────
 
 router.patch("/admin/venues/:venueId/featured", requireAuth, async (req, res) => {
   try {
@@ -362,6 +400,8 @@ router.patch("/admin/venues/:venueId/featured", requireAuth, async (req, res) =>
   }
 });
 
+// ─── Venue: list ──────────────────────────────────────────────────────────────
+
 router.get("/admin/venues", requireAuth, async (req, res) => {
   try {
     const admin = await requireAdmin(req, res);
@@ -381,6 +421,7 @@ router.get("/admin/venues", requireAuth, async (req, res) => {
         rating: Number(v.rating),
         totalReviews: v.totalReviews,
         isApproved: v.isApproved,
+        isFeatured: v.isFeatured,
         amenities: v.amenities ?? [],
         images: v.images ?? [],
         description: v.description ?? null,
@@ -396,6 +437,8 @@ router.get("/admin/venues", requireAuth, async (req, res) => {
     res.status(500).json({ error: "internal_error", message: "Failed to list venues" });
   }
 });
+
+// ─── Owner Leads: list ────────────────────────────────────────────────────────
 
 router.get("/admin/owner-leads", requireAuth, async (req, res) => {
   try {
@@ -414,6 +457,7 @@ router.get("/admin/owner-leads", requireAuth, async (req, res) => {
         sports: l.sports ?? [],
         message: l.message ?? null,
         status: l.status,
+        venueId: l.venueId ?? null,
         createdAt: l.createdAt.toISOString(),
       })),
     );
@@ -423,6 +467,8 @@ router.get("/admin/owner-leads", requireAuth, async (req, res) => {
   }
 });
 
+// ─── Owner Leads: update status ───────────────────────────────────────────────
+
 router.patch("/admin/owner-leads/:leadId/status", requireAuth, async (req, res) => {
   try {
     const admin = await requireAdmin(req, res);
@@ -430,7 +476,7 @@ router.patch("/admin/owner-leads/:leadId/status", requireAuth, async (req, res) 
 
     const leadId = req.params.leadId as string;
     const { status } = req.body as {
-      status: "new" | "contacted" | "demo" | "onboarded" | "rejected";
+      status: "new" | "qualified" | "onboarded" | "rejected";
     };
 
     const [updated] = await db
@@ -453,15 +499,69 @@ router.patch("/admin/owner-leads/:leadId/status", requireAuth, async (req, res) 
       sports: updated.sports ?? [],
       message: updated.message ?? null,
       status: updated.status,
-      contactedOn: (updated as any).contactedOn?.toISOString() ?? null,
-      followupDate: (updated as any).followupDate ?? null,
-      notes: (updated as any).notes ?? null,
-      assignedAdmin: (updated as any).assignedAdmin ?? null,
+      venueId: updated.venueId ?? null,
       createdAt: updated.createdAt.toISOString(),
     });
   } catch (err) {
     req.log.error({ err }, "Error updating owner lead status");
     res.status(500).json({ error: "internal_error", message: "Failed to update lead" });
+  }
+});
+
+// ─── Owner Leads: convert to venue ───────────────────────────────────────────
+
+router.post("/admin/owner-leads/:leadId/convert", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const leadId = req.params.leadId as string;
+
+    const [lead] = await db.select().from(ownerLeadsTable).where(eq(ownerLeadsTable.id, leadId));
+
+    if (!lead) {
+      res.status(404).json({ error: "not_found", message: "Lead not found" });
+      return;
+    }
+    if (lead.venueId) {
+      res.status(409).json({ error: "already_converted", message: "Lead already linked to a venue" });
+      return;
+    }
+
+    const [venue] = await db
+      .insert(venuesTable)
+      .values({
+        name: lead.venueName,
+        city: lead.city,
+        address: lead.city,
+        sports: lead.sports ?? [],
+        pricePerHour: "0",
+        weekdayMorningPrice: 0,
+        weekdayDayPrice: 0,
+        weekdayEveningPrice: 0,
+        weekendPrice: 0,
+        slotIntervalMins: 60,
+        openTime: "06:00",
+        closeTime: "23:00",
+        ownerName: lead.ownerName,
+        contactPhone: lead.phone,
+        isApproved: false,
+      })
+      .returning();
+
+    await db
+      .update(ownerLeadsTable)
+      .set({ venueId: venue.id, status: "onboarded", updatedAt: new Date() })
+      .where(eq(ownerLeadsTable.id, leadId));
+
+    res.status(201).json({
+      success: true,
+      venueId: venue.id,
+      venueName: venue.name,
+    });
+  } catch (err) {
+    req.log.error({ err }, "Error converting lead to venue");
+    res.status(500).json({ error: "internal_error", message: "Failed to convert lead" });
   }
 });
 

@@ -459,7 +459,7 @@ export type OwnerLeadStatus =
 
 export const OwnerLeadStatus = {
   new: "new",
-  contacted: "contacted",
+  qualified: "qualified",
   onboarded: "onboarded",
   rejected: "rejected",
 } as const;
@@ -473,7 +473,14 @@ export interface OwnerLead {
   sports: string[];
   message?: string | null;
   status: OwnerLeadStatus;
+  venueId?: string | null;
   createdAt: string;
+}
+
+export interface ConvertLeadResponse {
+  success: boolean;
+  venueId: string;
+  venueName: string;
 }
 
 export interface AdminStats {
@@ -581,7 +588,7 @@ export type UpdateOwnerLeadStatusBodyStatus =
 
 export const UpdateOwnerLeadStatusBodyStatus = {
   new: "new",
-  contacted: "contacted",
+  qualified: "qualified",
   onboarded: "onboarded",
   rejected: "rejected",
 } as const;

@@ -65,6 +65,8 @@ export default function Admin() {
   const { toast } = useToast();
   const [updatingVenueId, setUpdatingVenueId] = useState<string | null>(null);
   const [updatingLeadId, setUpdatingLeadId] = useState<string | null>(null);
+  const [convertingLeadId, setConvertingLeadId] = useState<string | null>(null);
+  const [activatingVenueId, setActivatingVenueId] = useState<string | null>(null);
 
   const { data: profile, isLoading: profileLoading } = useGetMyProfile();
   const { data: stats, isLoading: statsLoading } = useGetAdminStats();
@@ -310,6 +312,30 @@ export default function Admin() {
     finally { setUpdatingLeadId(null); }
   };
 
+  const handleConvertLead = async (leadId: string) => {
+    setConvertingLeadId(leadId);
+    try {
+      const result = await adminFetch<{ success: boolean; venueId: string; venueName: string }>(
+        `/admin/owner-leads/${leadId}/convert`,
+        { method: "POST" }
+      );
+      await queryClient.invalidateQueries({ queryKey: ["/api/admin/owner-leads"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/admin/venues"] });
+      toast({ title: `Venue "${result.venueName}" created — ID ${result.venueId.slice(0, 8)}…` });
+    } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
+    finally { setConvertingLeadId(null); }
+  };
+
+  const handleActivateVenue = async (venueId: string) => {
+    setActivatingVenueId(venueId);
+    try {
+      await adminFetch(`/admin/venues/${venueId}/activate`, { method: "POST" });
+      await queryClient.invalidateQueries({ queryKey: ["/api/admin/venues"] });
+      toast({ title: "Venue activated — slots generated for 14 days" });
+    } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
+    finally { setActivatingVenueId(null); }
+  };
+
   const handleToggleCity = async (city: City) => {
     setTogglingCityId(city.id);
     try {
@@ -511,9 +537,9 @@ export default function Admin() {
                     </TableCell>
                     <TableCell>
                       {!v.isApproved ? (
-                        <Button size="sm" disabled={updatingVenueId === v.id}
-                          onClick={() => handleApprove(v.id, true)} className="h-8 text-xs font-bold uppercase">
-                          <CheckCircle className="w-3 h-3 mr-1" /> Approve
+                        <Button size="sm" disabled={activatingVenueId === v.id}
+                          onClick={() => handleActivateVenue(v.id)} className="h-8 text-xs font-bold uppercase bg-primary text-black hover:bg-primary/90">
+                          <Zap className="w-3 h-3 mr-1" /> Activate
                         </Button>
                       ) : (
                         <Button size="sm" variant="destructive" disabled={updatingVenueId === v.id}
@@ -542,11 +568,12 @@ export default function Admin() {
                   <TableHead>Sports</TableHead>
                   <TableHead>Submitted</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {leadsLoading ? (
-                  <TableRow><TableCell colSpan={7} className="text-center py-8"><Skeleton className="h-8 w-full" /></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="text-center py-8"><Skeleton className="h-8 w-full" /></TableCell></TableRow>
                 ) : leads?.length ? (
                   leads.map((lead) => (
                     <TableRow key={lead.id}>
@@ -565,25 +592,39 @@ export default function Admin() {
                         {new Date(lead.createdAt).toLocaleDateString("en-IN")}
                       </TableCell>
                       <TableCell>
-                        <Select value={lead.status} disabled={updatingLeadId === lead.id}
+                        <Select value={lead.status} disabled={updatingLeadId === lead.id || lead.status === "onboarded"}
                           onValueChange={(v) => handleLeadStatus(lead.id, v)}>
-                          <SelectTrigger className="h-8 w-36 text-xs font-bold uppercase">
+                          <SelectTrigger className="h-8 w-32 text-xs font-bold uppercase">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="new">New</SelectItem>
-                            <SelectItem value="contacted">Contacted</SelectItem>
-                            <SelectItem value="demo">Demo</SelectItem>
+                            <SelectItem value="qualified">Qualified</SelectItem>
                             <SelectItem value="onboarded">Onboarded</SelectItem>
                             <SelectItem value="rejected">Rejected</SelectItem>
                           </SelectContent>
                         </Select>
                       </TableCell>
+                      <TableCell>
+                        {(lead as any).venueId ? (
+                          <Badge variant="outline" className="text-[10px] font-mono gap-1 cursor-default">
+                            <CheckCircle className="w-3 h-3 text-green-500" />
+                            Venue linked
+                          </Badge>
+                        ) : (lead.status === "new" || lead.status === "qualified") ? (
+                          <Button size="sm" disabled={convertingLeadId === lead.id}
+                            onClick={() => handleConvertLead(lead.id)}
+                            className="h-8 text-xs font-bold uppercase bg-primary text-black hover:bg-primary/90">
+                            <Sprout className="w-3 h-3 mr-1" />
+                            {convertingLeadId === lead.id ? "Converting…" : "Convert"}
+                          </Button>
+                        ) : null}
+                      </TableCell>
                     </TableRow>
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">No owner leads yet.</TableCell>
+                    <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">No owner leads yet.</TableCell>
                   </TableRow>
                 )}
               </TableBody>

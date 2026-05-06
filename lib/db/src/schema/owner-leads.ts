@@ -9,11 +9,11 @@ import {
 } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod/v4";
+import { venuesTable } from "./venues";
 
 export const ownerLeadStatusEnum = pgEnum("owner_lead_status", [
   "new",
-  "contacted",
-  "demo",
+  "qualified",
   "onboarded",
   "rejected",
 ]);
@@ -27,6 +27,7 @@ export const ownerLeadsTable = pgTable("owner_leads", {
   sports: text("sports").array().notNull().default([]),
   message: text("message"),
   status: ownerLeadStatusEnum("status").notNull().default("new"),
+  venueId: uuid("venue_id").references(() => venuesTable.id, { onDelete: "set null" }),
   contactedOn: timestamp("contacted_on"),
   followupDate: date("followup_date"),
   notes: text("notes"),
