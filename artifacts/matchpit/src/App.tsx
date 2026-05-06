@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
-import { ClerkProvider, SignIn, SignUp, Show, useClerk, useUser } from '@clerk/react';
-import { publishableKeyFromHost } from '@clerk/react/internal';
+import { ClerkProvider, SignIn, SignUp, useClerk, useUser } from '@clerk/react';
 import { Switch, Route, useLocation, Router as WouterRouter, Redirect } from 'wouter';
 import { QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
@@ -32,11 +31,8 @@ import SquadDetailPage from "@/pages/squad-detail";
 import NotFound from "@/pages/not-found";
 import Onboarding from "@/pages/onboarding";
 
-const clerkPubKey = publishableKeyFromHost(
-  window.location.hostname,
-  import.meta.env.VITE_CLERK_PUBLISHABLE_KEY,
-);
-const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
+const clerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string;
+const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL as string | undefined;
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 function stripBase(path: string): string {
