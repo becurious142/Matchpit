@@ -28725,15 +28725,6 @@ var init_isomorphicBtoa_DWmLcIHi = __esm({
 });
 
 // node_modules/.pnpm/@clerk+shared@4.10.2_react-_fecf32e33ba86f972d56204488b37d23/node_modules/@clerk/shared/dist/runtime/keys-ChIG_Ewf.mjs
-function buildPublishableKey(frontendApi) {
-  return `${PUBLISHABLE_FRONTEND_API_DEV_REGEX.test(frontendApi) || frontendApi.startsWith("clerk.") && LEGACY_DEV_INSTANCE_SUFFIXES.some((s2) => frontendApi.endsWith(s2)) ? PUBLISHABLE_KEY_TEST_PREFIX : PUBLISHABLE_KEY_LIVE_PREFIX}${isomorphicBtoa(`${frontendApi}$`).replace(/=+$/, "")}`;
-}
-function publishableKeyFromHost(host, fallbackKey) {
-  if (fallbackKey && isDevelopmentFromPublishableKey(fallbackKey)) return fallbackKey;
-  const hostname2 = host.toLowerCase().replace(/:\d+$/, "");
-  if (!hostname2) throw new Error("Host must not be empty.");
-  return buildPublishableKey(`clerk.${hostname2}`);
-}
 function isValidDecodedPublishableKey(decoded) {
   if (!decoded.endsWith("$")) return false;
   const withoutTrailing = decoded.slice(0, -1);
@@ -28792,9 +28783,6 @@ function createDevOrStagingUrlCache() {
     return res;
   } };
 }
-function isDevelopmentFromPublishableKey(apiKey) {
-  return apiKey.startsWith("test_") || apiKey.startsWith("pk_test_");
-}
 function isProductionFromPublishableKey(apiKey) {
   return apiKey.startsWith("live_") || apiKey.startsWith("pk_live_");
 }
@@ -28806,7 +28794,7 @@ async function getCookieSuffix(publishableKey, subtle = globalThis.crypto.subtle
   const digest = await subtle.digest("sha-1", data);
   return isomorphicBtoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/gi, "-").replace(/\//gi, "_").substring(0, 8);
 }
-var PUBLISHABLE_KEY_LIVE_PREFIX, PUBLISHABLE_KEY_TEST_PREFIX, PUBLISHABLE_FRONTEND_API_DEV_REGEX, getSuffixedCookieName;
+var PUBLISHABLE_KEY_LIVE_PREFIX, PUBLISHABLE_KEY_TEST_PREFIX, getSuffixedCookieName;
 var init_keys_ChIG_Ewf = __esm({
   "node_modules/.pnpm/@clerk+shared@4.10.2_react-_fecf32e33ba86f972d56204488b37d23/node_modules/@clerk/shared/dist/runtime/keys-ChIG_Ewf.mjs"() {
     init_constants_Bta24VLk();
@@ -28814,7 +28802,6 @@ var init_keys_ChIG_Ewf = __esm({
     init_isomorphicBtoa_DWmLcIHi();
     PUBLISHABLE_KEY_LIVE_PREFIX = "pk_live_";
     PUBLISHABLE_KEY_TEST_PREFIX = "pk_test_";
-    PUBLISHABLE_FRONTEND_API_DEV_REGEX = /^(([a-z]+)-){2}([0-9]{1,2})\.clerk\.accounts([a-z.]*)(dev|com)$/i;
     getSuffixedCookieName = (cookieName, cookieSuffix) => {
       return `${cookieName}_${cookieSuffix}`;
     };
@@ -86680,9 +86667,6 @@ var getAuth = ((req, options) => {
   return getAuthObjectForAcceptedToken({ authObject, acceptsToken: options?.acceptsToken });
 });
 
-// artifacts/api-server/src/app.ts
-init_keys();
-
 // artifacts/api-server/src/middlewares/clerkProxyMiddleware.ts
 var import_http_proxy_middleware = __toESM(require_dist3(), 1);
 var CLERK_FAPI = "https://frontend-api.clerk.dev";
@@ -95638,12 +95622,12 @@ app.use("/api/payments/webhook", import_express44.default.raw({ type: "applicati
 app.use(import_express44.default.json());
 app.use(import_express44.default.urlencoded({ extended: true }));
 app.use(
-  clerkMiddleware((req) => ({
-    publishableKey: publishableKeyFromHost(
-      getClerkProxyHost(req) ?? "",
-      process.env.CLERK_PUBLISHABLE_KEY
-    )
-  }))
+  clerkMiddleware({
+    publishableKey: process.env.CLERK_PUBLISHABLE_KEY,
+    secretKey: process.env.CLERK_SECRET_KEY,
+    // Add JWT token support for Vercel serverless deployment
+    jwtKey: process.env.CLERK_JWT_KEY
+  })
 );
 app.use("/api", routes_default);
 var app_default = app;
