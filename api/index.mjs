@@ -93901,7 +93901,7 @@ router17.post("/squads/create", requireAuth, async (req, res) => {
     const { userId } = getAuth(req);
     const profile = await getProfileByClerkId(userId);
     if (!profile) {
-      res.status(404).json({ error: "not_found" });
+      res.status(404).json({ error: "not_found", message: "Profile not found" });
       return;
     }
     const { name: name2, sport, description, logoUrl } = req.body;
@@ -93909,24 +93909,45 @@ router17.post("/squads/create", requireAuth, async (req, res) => {
       res.status(400).json({ error: "validation", message: "name and sport required" });
       return;
     }
-    const [activeCity] = await db.select({ id: citiesTable.id }).from(citiesTable).where(eq(citiesTable.isActive, true)).limit(1);
-    const [squad] = await db.insert(squadsTable).values({
-      name: name2.trim(),
-      sport: sport.trim(),
-      captainUserId: profile.id,
-      cityId: activeCity?.id ?? null,
-      description: description?.trim() ?? null,
-      logoUrl: logoUrl ?? null
-    }).returning();
-    await db.insert(squadMembersTable).values({
-      squadId: squad.id,
-      userId: profile.id,
-      role: "captain"
-    });
+    let cityId = null;
+    try {
+      const [activeCity] = await db.select({ id: citiesTable.id }).from(citiesTable).where(eq(citiesTable.isActive, true)).limit(1);
+      cityId = activeCity?.id ?? null;
+      if (!cityId) {
+        req.log.warn("No active city found, creating squad without city");
+      }
+    } catch (cityError) {
+      req.log.warn({ cityError }, "Error fetching active city, continuing without city");
+    }
+    let squad;
+    try {
+      const [createdSquad] = await db.insert(squadsTable).values({
+        name: name2.trim(),
+        sport: sport.trim(),
+        captainUserId: profile.id,
+        cityId,
+        description: description?.trim() ?? null,
+        logoUrl: logoUrl ?? null
+      }).returning();
+      squad = createdSquad;
+    } catch (insertError) {
+      req.log.error({ insertError, profileId: profile.id }, "Failed to insert squad");
+      res.status(500).json({ error: "insert_failed", message: "Failed to create squad" });
+      return;
+    }
+    try {
+      await db.insert(squadMembersTable).values({
+        squadId: squad.id,
+        userId: profile.id,
+        role: "captain"
+      });
+    } catch (memberError) {
+      req.log.error({ memberError, squadId: squad.id }, "Failed to add captain as member");
+    }
     res.status(201).json(formatSquad(squad, 1, true));
   } catch (err) {
     req.log.error({ err }, "Error creating squad");
-    res.status(500).json({ error: "internal_error" });
+    res.status(500).json({ error: "internal_error", message: "Failed to create squad" });
   }
 });
 router17.post("/squads/:id/join", requireAuth, async (req, res) => {
