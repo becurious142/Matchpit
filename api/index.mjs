@@ -86748,13 +86748,25 @@ async function requireAuth(req, res, next) {
         if (email3) {
           const profile = await getOrCreateProfile(userId, email3, fullName);
           req.userProfile = profile;
+        } else {
+          const profile = await getOrCreateProfile(userId, `clerk:${userId}@noemail.local`, "Player");
+          req.userProfile = profile;
         }
-      } catch {
+      } catch (clerkError) {
+        req.log.warn({ userId, clerkError }, "Clerk API lookup failed, creating placeholder profile");
+        const profile = await getOrCreateProfile(userId, `clerk:${userId}@noemail.local`, "Player");
+        req.userProfile = profile;
       }
     } else {
       req.userProfile = existing;
     }
-  } catch {
+  } catch (dbError) {
+    req.log.error({ userId, dbError }, "Database error in requireAuth");
+    try {
+      const profile = await getOrCreateProfile(userId, `clerk:${userId}@noemail.local`, "Player");
+      req.userProfile = profile;
+    } catch {
+    }
   }
   next();
 }
