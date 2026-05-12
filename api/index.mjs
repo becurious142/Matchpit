@@ -86946,18 +86946,12 @@ router2.put("/profile/me", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
     req.log.debug({ userId }, "Profile update request");
-    req.log.debug({
-      userId,
-      body: req.body,
-      headers: req.headers["content-type"],
-      method: req.method
-    }, "Request body debug");
-    if (!req.body || typeof req.body !== "object") {
-      req.log.warn({ userId, body: req.body }, "Request body is missing or invalid");
+    let body = req.body;
+    if (!body) {
+      req.log.warn({ userId, body: req.body }, "Request body undefined");
       res.status(400).json({ error: "invalid_request", message: "Request body is required" });
       return;
     }
-    const body = req.body;
     const { fullName, phone, city, favoriteSports, avatarUrl, preferredAreas, primarySkillLevel, onboardingComplete } = body;
     const existing = await db.select().from(profilesTable).where(eq(profilesTable.clerkId, userId)).limit(1);
     if (!existing.length) {
