@@ -1,7 +1,6 @@
 # See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
 
 # compiled output
-dist
 tmp
 out-tsc
 *.tsbuildinfo
@@ -50,13 +49,34 @@ Thumbs.db
 
 #environment files
 .env
+.env.*
+.env.local
 .env.development
 .env.production
+.env.test
+!.env.example
 
 # Production cleanup: temporary/debug files
 check_col.*
 lib/db/check*
 attached_assets/
+
+# Build artifacts and API bundles
+api/
+dist/
+*.mjs.map
+
+# Logs and runtime files
+logs/
+*.log
+pino-*.mjs
+thread-stream-worker.mjs
+
+# Sensitive configuration
+vercel-env-setup.md
+*.key
+*.pem
+*.crt
 
 # One-time migration scripts (remove after production deploy)
 scripts/backfill-*.ts

@@ -1,5 +1,9 @@
+import { config } from "dotenv";
 import app from "./app";
 import { logger } from "./lib/logger";
+
+// Load environment variables explicitly
+config();
 
 // ─── Required environment variable validation ─────────────────────────────────
 const REQUIRED_ENV: string[] = ["PORT", "DATABASE_URL", "CLERK_SECRET_KEY"];
