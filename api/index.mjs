@@ -86732,7 +86732,9 @@ init_drizzle_orm();
 import { randomBytes } from "crypto";
 async function requireAuth(req, res, next) {
   const { userId } = getAuth(req);
+  req.log.debug({ userId, headers: req.headers.authorization }, "Auth check");
   if (!userId) {
+    req.log.warn({ headers: req.headers.authorization }, "Authentication failed - no userId");
     res.status(401).json({ error: "unauthorized", message: "Authentication required" });
     return;
   }
@@ -86943,9 +86945,16 @@ router2.get("/profile/me", requireAuth, async (req, res) => {
 router2.put("/profile/me", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
+    req.log.debug({ userId }, "Profile update request");
+    if (!req.body || typeof req.body !== "object") {
+      req.log.warn({ userId, body: req.body }, "Request body is missing or invalid");
+      res.status(400).json({ error: "invalid_request", message: "Request body is required" });
+      return;
+    }
     const { fullName, phone, city, favoriteSports, avatarUrl, preferredAreas, primarySkillLevel, onboardingComplete } = req.body;
     const existing = await db.select().from(profilesTable).where(eq(profilesTable.clerkId, userId)).limit(1);
     if (!existing.length) {
+      req.log.warn({ userId }, "Profile not found for update");
       res.status(404).json({ error: "not_found", message: "Profile not found" });
       return;
     }
@@ -86960,10 +86969,12 @@ router2.put("/profile/me", requireAuth, async (req, res) => {
     if (preferredAreas !== void 0) updateData.preferredAreas = preferredAreas;
     if (primarySkillLevel !== void 0) updateData.primarySkillLevel = primarySkillLevel;
     if (onboardingComplete !== void 0) updateData.onboardingComplete = onboardingComplete;
+    req.log.debug({ userId, updateData }, "Updating profile");
     const [updated] = await db.update(profilesTable).set(updateData).where(eq(profilesTable.clerkId, userId)).returning();
+    req.log.debug({ userId, profileId: updated.id }, "Profile updated successfully");
     res.json(formatProfile(updated));
   } catch (err) {
-    req.log.error({ err }, "Error updating profile");
+    req.log.error({ err, userId: getAuth(req).userId }, "Error updating profile");
     res.status(500).json({ error: "internal_error", message: "Failed to update profile" });
   }
 });
