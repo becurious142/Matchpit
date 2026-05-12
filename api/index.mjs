@@ -86951,7 +86951,8 @@ router2.put("/profile/me", requireAuth, async (req, res) => {
       res.status(400).json({ error: "invalid_request", message: "Request body is required" });
       return;
     }
-    const { fullName, phone, city, favoriteSports, avatarUrl, preferredAreas, primarySkillLevel, onboardingComplete } = req.body;
+    const body = req.body;
+    const { fullName, phone, city, favoriteSports, avatarUrl, preferredAreas, primarySkillLevel, onboardingComplete } = body;
     const existing = await db.select().from(profilesTable).where(eq(profilesTable.clerkId, userId)).limit(1);
     if (!existing.length) {
       req.log.warn({ userId }, "Profile not found for update");
@@ -95665,6 +95666,11 @@ app.use((0, import_cors.default)({ credentials: true, origin: buildCorsOrigin() 
 app.use("/api/payments/webhook", import_express44.default.raw({ type: "application/json" }));
 app.use(import_express44.default.json());
 app.use(import_express44.default.urlencoded({ extended: true }));
+console.log("Environment variables check:", {
+  CLERK_PUBLISHABLE_KEY: process.env.CLERK_PUBLISHABLE_KEY ? "\u2713 Present" : "\u2717 Missing",
+  CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY ? "\u2713 Present" : "\u2717 Missing",
+  CLERK_JWT_KEY: process.env.CLERK_JWT_KEY ? "\u2713 Present" : "\u2717 Missing"
+});
 app.use(
   clerkMiddleware({
     publishableKey: process.env.CLERK_PUBLISHABLE_KEY,
