@@ -135,7 +135,8 @@ router.put("/profile/me", requireAuth, async (req, res) => {
       return;
     }
     
-    const { fullName, phone, city, favoriteSports, avatarUrl, preferredAreas, primarySkillLevel, onboardingComplete } = req.body;
+    const body = req.body as any;
+    const { fullName, phone, city, favoriteSports, avatarUrl, preferredAreas, primarySkillLevel, onboardingComplete } = body;
 
     const existing = await db
       .select()
