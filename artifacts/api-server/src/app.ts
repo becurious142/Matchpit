@@ -67,6 +67,13 @@ app.use("/api/payments/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Debug environment variables
+console.log("Environment variables check:", {
+  CLERK_PUBLISHABLE_KEY: process.env.CLERK_PUBLISHABLE_KEY ? "✓ Present" : "✗ Missing",
+  CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY ? "✓ Present" : "✗ Missing", 
+  CLERK_JWT_KEY: process.env.CLERK_JWT_KEY ? "✓ Present" : "✗ Missing",
+});
+
 app.use(
   clerkMiddleware({
     publishableKey: process.env.CLERK_PUBLISHABLE_KEY,

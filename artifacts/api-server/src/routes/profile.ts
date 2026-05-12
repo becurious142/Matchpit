@@ -127,15 +127,26 @@ router.put("/profile/me", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
     req.log.debug({ userId }, "Profile update request");
-    
-    // Handle case where req.body is undefined (Vercel serverless issue)
-    if (!req.body || typeof req.body !== 'object') {
-      req.log.warn({ userId, body: req.body }, "Request body is missing or invalid");
-      res.status(400).json({ error: "invalid_request", message: "Request body is required" });
-      return;
+
+    // Handle Vercel serverless body parsing issue — req.body may be undefined
+    // if the JSON middleware hasn't consumed the stream yet, so we fall back
+    // to reading the raw request body and parsing it ourselves.
+    let body = req.body;
+    if (!body || typeof body !== "object") {
+      try {
+        const raw = await new Promise<string>((resolve, reject) => {
+          let data = "";
+          req.on("data", (chunk) => (data += chunk));
+          req.on("end", () => resolve(data));
+          req.on("error", reject);
+        });
+        body = raw ? JSON.parse(raw) : {};
+      } catch {
+        req.log.warn({ userId }, "Request body missing or invalid — treating as empty update");
+        body = {};
+      }
     }
-    
-    const body = req.body as any;
+
     const { fullName, phone, city, favoriteSports, avatarUrl, preferredAreas, primarySkillLevel, onboardingComplete } = body;
 
     const existing = await db
