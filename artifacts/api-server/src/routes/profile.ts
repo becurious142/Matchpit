@@ -126,6 +126,15 @@ router.get("/profile/me", requireAuth, async (req, res) => {
 router.put("/profile/me", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
+    req.log.debug({ userId }, "Profile update request");
+    
+    // Handle case where req.body is undefined (Vercel serverless issue)
+    if (!req.body || typeof req.body !== 'object') {
+      req.log.warn({ userId, body: req.body }, "Request body is missing or invalid");
+      res.status(400).json({ error: "invalid_request", message: "Request body is required" });
+      return;
+    }
+    
     const { fullName, phone, city, favoriteSports, avatarUrl, preferredAreas, primarySkillLevel, onboardingComplete } = req.body;
 
     const existing = await db
@@ -135,6 +144,7 @@ router.put("/profile/me", requireAuth, async (req, res) => {
       .limit(1);
 
     if (!existing.length) {
+      req.log.warn({ userId }, "Profile not found for update");
       res.status(404).json({ error: "not_found", message: "Profile not found" });
       return;
     }
@@ -151,15 +161,18 @@ router.put("/profile/me", requireAuth, async (req, res) => {
     if (primarySkillLevel !== undefined) updateData.primarySkillLevel = primarySkillLevel;
     if (onboardingComplete !== undefined) updateData.onboardingComplete = onboardingComplete;
 
+    req.log.debug({ userId, updateData }, "Updating profile");
+
     const [updated] = await db
       .update(profilesTable)
       .set(updateData)
       .where(eq(profilesTable.clerkId, userId!))
       .returning();
 
+    req.log.debug({ userId, profileId: updated.id }, "Profile updated successfully");
     res.json(formatProfile(updated));
   } catch (err) {
-    req.log.error({ err }, "Error updating profile");
+    req.log.error({ err, userId: getAuth(req).userId }, "Error updating profile");
     res.status(500).json({ error: "internal_error", message: "Failed to update profile" });
   }
 });

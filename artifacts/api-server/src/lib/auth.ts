@@ -11,7 +11,10 @@ export async function requireAuth(
   next: NextFunction,
 ) {
   const { userId } = getAuth(req);
+  req.log.debug({ userId, headers: req.headers.authorization }, "Auth check");
+  
   if (!userId) {
+    req.log.warn({ headers: req.headers.authorization }, "Authentication failed - no userId");
     res.status(401).json({ error: "unauthorized", message: "Authentication required" });
     return;
   }
@@ -36,15 +39,29 @@ export async function requireAuth(
         if (email) {
           const profile = await getOrCreateProfile(userId, email, fullName);
           (req as any).userProfile = profile;
+        } else {
+          // Create profile with placeholder email if Clerk doesn't have one
+          const profile = await getOrCreateProfile(userId, `clerk:${userId}@noemail.local`, "Player");
+          (req as any).userProfile = profile;
         }
-      } catch {
-        // If Clerk lookup fails, continue — route handler will deal with missing profile
+      } catch (clerkError) {
+        // If Clerk lookup fails, create a placeholder profile to prevent 500 errors
+        req.log.warn({ userId, clerkError }, "Clerk API lookup failed, creating placeholder profile");
+        const profile = await getOrCreateProfile(userId, `clerk:${userId}@noemail.local`, "Player");
+        (req as any).userProfile = profile;
       }
     } else {
       (req as any).userProfile = existing;
     }
-  } catch {
-    // DB error — don't block auth, let the route handler deal with it
+  } catch (dbError) {
+    // DB error — create minimal profile to prevent blocking
+    req.log.error({ userId, dbError }, "Database error in requireAuth");
+    try {
+      const profile = await getOrCreateProfile(userId, `clerk:${userId}@noemail.local`, "Player");
+      (req as any).userProfile = profile;
+    } catch {
+      // If even that fails, continue without profile
+    }
   }
 
   next();

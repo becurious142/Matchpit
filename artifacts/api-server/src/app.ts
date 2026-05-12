@@ -68,12 +68,12 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use(
-  clerkMiddleware((req) => ({
-    publishableKey: publishableKeyFromHost(
-      getClerkProxyHost(req) ?? "",
-      process.env.CLERK_PUBLISHABLE_KEY,
-    ),
-  })),
+  clerkMiddleware({
+    publishableKey: process.env.CLERK_PUBLISHABLE_KEY,
+    secretKey: process.env.CLERK_SECRET_KEY,
+    // Add JWT token support for Vercel serverless deployment
+    jwtKey: process.env.CLERK_JWT_KEY,
+  }),
 );
 
 app.use("/api", router);
