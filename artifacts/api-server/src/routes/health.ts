@@ -1,11 +1,10 @@
 import { Router, type IRouter } from "express";
-import { HealthCheckResponse } from "@workspace/api-zod";
 
 const router: IRouter = Router();
 
 function healthHandler(_req: any, res: any) {
-  const data = HealthCheckResponse.parse({ status: "ok" });
-  res.json(data);
+  // Simple health check - no validation needed
+  res.json({ status: "ok" });
 }
 
 // Primary health endpoint (used by Replit artifact health check)
