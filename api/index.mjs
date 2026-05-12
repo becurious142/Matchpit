@@ -86946,6 +86946,12 @@ router2.put("/profile/me", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
     req.log.debug({ userId }, "Profile update request");
+    req.log.debug({
+      userId,
+      body: req.body,
+      headers: req.headers["content-type"],
+      method: req.method
+    }, "Request body debug");
     if (!req.body || typeof req.body !== "object") {
       req.log.warn({ userId, body: req.body }, "Request body is missing or invalid");
       res.status(400).json({ error: "invalid_request", message: "Request body is required" });
