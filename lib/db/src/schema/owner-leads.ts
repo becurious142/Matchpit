@@ -16,6 +16,8 @@ export const ownerLeadStatusEnum = pgEnum("owner_lead_status", [
   "qualified",
   "onboarded",
   "rejected",
+  "contacted",
+  "demo",
 ]);
 
 export const ownerLeadsTable = pgTable("owner_leads", {

@@ -71,6 +71,8 @@ export default function MatchDetail() {
   });
 
   const isHost = !!profile && !!matchDetail && profile.id === matchDetail.hostUserId;
+  const currentUserParticipant = matchDetail?.participants.find(p => p.userId === profile?.id);
+  const needsFinalPayment = currentUserParticipant && currentUserParticipant.status !== 'final_paid' && matchDetail?.status === 'confirmed';
 
   const handleJoin = async () => {
     if (!user) {
@@ -98,26 +100,116 @@ export default function MatchDetail() {
         prefill: { name: order.prefillName || "", email: order.prefillEmail || "", contact: order.prefillContact || "" },
         theme: { color: "#84cc16" },
         handler: async function (response: any) {
-          try {
-            await verifyPayment.mutateAsync({
-              data: {
-                razorpayOrderId: response.razorpay_order_id,
-                razorpayPaymentId: response.razorpay_payment_id,
-                razorpaySignature: response.razorpay_signature,
-                type: "match_reserve",
-                referenceId: id!
+          setIsProcessing(true);
+          toast({ title: "Verifying payment...", description: "Please wait while we confirm your spot." });
+          
+          let attempts = 0;
+          const pollInterval = setInterval(async () => {
+            attempts++;
+            const { data } = await refetch();
+            const me = data?.participants?.find((p: any) => p.userId === user?.id);
+            
+            if (me?.paymentStatus === "reserve_paid") {
+              clearInterval(pollInterval);
+              setIsProcessing(false);
+              toast({ title: "You're in!", description: "You've successfully joined the match." });
+              queryClient.invalidateQueries({ queryKey: ["listHostedMatches"] });
+            } else if (attempts >= 10) {
+              clearInterval(pollInterval);
+              // Fallback to manual verify if webhook is severely delayed
+              try {
+                await verifyPayment.mutateAsync({
+                  data: {
+                    razorpayOrderId: response.razorpay_order_id,
+                    razorpayPaymentId: response.razorpay_payment_id,
+                    razorpaySignature: response.razorpay_signature,
+                    type: "match_reserve",
+                    referenceId: id!
+                  }
+                });
+                await refetch();
+                queryClient.invalidateQueries({ queryKey: ["listHostedMatches"] });
+                toast({ title: "You're in!", description: "You've successfully joined the match." });
+              } catch (err: any) {
+                toast({ title: "Delayed processing", description: "Payment received, but taking longer than usual to confirm." });
+              } finally {
+                setIsProcessing(false);
               }
-            });
-            await joinMatch.mutateAsync({ matchId: id! });
-            await queryClient.invalidateQueries({ queryKey: ["getHostedMatch", id] });
-            await queryClient.invalidateQueries({ queryKey: ["listHostedMatches"] });
-            toast({ title: "You're in!", description: "You've successfully joined the match." });
-            refetch();
-          } catch (err: any) {
-            toast({ title: "Failed", description: err.message, variant: "destructive" });
-          } finally {
-            setIsProcessing(false);
-          }
+            }
+          }, 2000);
+        }
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.on('payment.failed', function (response: any) {
+        setIsProcessing(false);
+        toast({ title: "Payment Failed", description: response.error.description, variant: "destructive" });
+      });
+      rzp.open();
+    } catch (err: any) {
+      setIsProcessing(false);
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  };
+
+  const handleFinalPayment = async () => {
+    if (!user || !matchDetail) return;
+    setIsProcessing(true);
+    try {
+      const order = await createPaymentOrder.mutateAsync({
+        data: { type: "match_final", referenceId: id!, amount: matchDetail.finalFeePerPlayer }
+      });
+
+      const isLoaded = await loadRazorpay();
+      if (!isLoaded) throw new Error("Razorpay SDK failed to load");
+
+      const options = {
+        key: order.razorpayKeyId,
+        amount: order.amount,
+        currency: order.currency,
+        name: "MATCHPIT",
+        description: `Final Payment: ${matchDetail.venue?.name}`,
+        order_id: order.orderId,
+        prefill: { name: order.prefillName || "", email: order.prefillEmail || "", contact: order.prefillContact || "" },
+        theme: { color: "#84cc16" },
+        handler: async function (response: any) {
+          setIsProcessing(true);
+          toast({ title: "Verifying payment...", description: "Confirming your final payment." });
+
+          let attempts = 0;
+          const pollInterval = setInterval(async () => {
+            attempts++;
+            const { data } = await refetch();
+            const me = data?.participants?.find((p: any) => p.userId === user?.id);
+            
+            if (me?.paymentStatus === "final_paid") {
+              clearInterval(pollInterval);
+              setIsProcessing(false);
+              toast({ title: "Paid!", description: "You've successfully completed the final payment." });
+              queryClient.invalidateQueries({ queryKey: ["listHostedMatches"] });
+            } else if (attempts >= 10) {
+              clearInterval(pollInterval);
+              try {
+                await verifyPayment.mutateAsync({
+                  data: {
+                    razorpayOrderId: response.razorpay_order_id,
+                    razorpayPaymentId: response.razorpay_payment_id,
+                    razorpaySignature: response.razorpay_signature,
+                    type: "match_final",
+                    referenceId: id!,
+                    computedGrossAmount: order.computedGrossAmount,
+                    finalFeeComponent: order.finalFeeComponent
+                  } as any
+                });
+                await refetch();
+                toast({ title: "Paid!", description: "You've successfully completed the final payment." });
+              } catch (err: any) {
+                toast({ title: "Delayed processing", description: "Payment received, but taking longer than usual to confirm." });
+              } finally {
+                setIsProcessing(false);
+              }
+            }
+          }, 2000);
         }
       };
 
@@ -505,19 +597,33 @@ export default function MatchDetail() {
                 </div>
 
                 {matchDetail.isUserJoined ? (
-                  <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4 text-center">
-                    <ShieldCheck className="w-8 h-8 text-green-500 mx-auto mb-2" />
-                    <h3 className="font-bold text-green-500 uppercase tracking-wider">You're in!</h3>
-                    <p className="text-sm text-green-500/80 mt-1">See you on the pitch.</p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-3 w-full border-green-500/30 text-green-500 hover:bg-green-500/10"
-                      onClick={() => setShowShare(true)}
-                    >
-                      <Share2 className="w-3 h-3 mr-1" /> Invite Friends
-                    </Button>
-                  </div>
+                  needsFinalPayment ? (
+                    <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4 text-center">
+                      <h3 className="font-bold text-yellow-500 uppercase tracking-wider mb-2">Final Payment Due</h3>
+                      <p className="text-sm text-yellow-500/80 mb-4 leading-tight">Match confirmed! Pay your remaining balance to play.</p>
+                      <Button
+                        className="w-full h-12 text-md font-bold shadow-lg bg-yellow-500 hover:bg-yellow-600 text-black"
+                        onClick={handleFinalPayment}
+                        disabled={isProcessing}
+                      >
+                        {isProcessing ? "Processing..." : `Pay Final Amount ₹${matchDetail.finalFeePerPlayer}`}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4 text-center">
+                      <ShieldCheck className="w-8 h-8 text-green-500 mx-auto mb-2" />
+                      <h3 className="font-bold text-green-500 uppercase tracking-wider">You're in!</h3>
+                      <p className="text-sm text-green-500/80 mt-1">See you on the pitch.</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-3 w-full border-green-500/30 text-green-500 hover:bg-green-500/10"
+                        onClick={() => setShowShare(true)}
+                      >
+                        <Share2 className="w-3 h-3 mr-1" /> Invite Friends
+                      </Button>
+                    </div>
+                  )
                 ) : isFull ? (
                   <Button className="w-full h-14 text-lg font-bold uppercase italic" disabled variant="secondary">
                     Match Full

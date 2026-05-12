@@ -27,3 +27,6 @@ export * from "./notification-dispatch-logs";
 export * from "./analytics-events";
 export * from "./user-reports";
 export * from "./user-strikes";
+export * from "./payment-webhooks";
+export * from "./hosted-match-reservations";
+export * from "./reconciliation-reports";

@@ -52,3 +52,18 @@ Thumbs.db
 .env
 .env.development
 .env.production
+
+# Production cleanup: temporary/debug files
+check_col.*
+lib/db/check*
+attached_assets/
+
+# One-time migration scripts (remove after production deploy)
+scripts/backfill-*.ts
+scripts/load-test-*.ts
+
+# Replit-specific (remove if not using Replit)
+.replit
+.replitignore
+replit.md
+**/.replit-artifact/

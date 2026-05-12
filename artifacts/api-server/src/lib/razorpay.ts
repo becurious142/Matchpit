@@ -22,6 +22,15 @@ export function verifyRazorpaySignature(
   return expected === signature;
 }
 
+export function verifyWebhookSignature(
+  rawBody: string,
+  signature: string,
+  secret: string
+): boolean {
+  if (!secret) return false;
+  return Razorpay.validateWebhookSignature(rawBody, signature, secret);
+}
+
 export function getRazorpayKeyId() {
   return keyId;
 }

@@ -264,6 +264,11 @@ export interface CreateHostedMatchBody {
   razorpaySignature: string;
 }
 
+export interface JoinHostedMatchBody {
+  reservePaymentId: string;
+  reservePaidAmount: number;
+}
+
 export type CreatePaymentOrderBodyType =
   (typeof CreatePaymentOrderBodyType)[keyof typeof CreatePaymentOrderBodyType];
 
@@ -285,6 +290,9 @@ export interface CreatePaymentOrderBody {
 
 export interface CreatePaymentOrderResponse {
   computedGrossAmount?: number;
+  hostFeeComponent?: number;
+  reserveFeeComponent?: number;
+  finalFeeComponent?: number;
   walletAmountUsed?: number;
   existingOrder?: boolean;
 }
@@ -315,6 +323,8 @@ export interface VerifyPaymentBody {
   razorpaySignature: string;
   type: VerifyPaymentBodyType;
   referenceId: string;
+  computedGrossAmount?: number;
+  finalFeeComponent?: number;
 }
 
 export interface PaymentVerifyResponse {

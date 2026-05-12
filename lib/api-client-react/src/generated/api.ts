@@ -33,6 +33,7 @@ import type {
   HostedMatchDetail,
   HostedMatchListResponse,
   HostedMatchParticipant,
+  JoinHostedMatchBody,
   ListAdminBookingsParams,
   ListAdminHostedMatchesParams,
   ListAdminPaymentsParams,
@@ -1520,11 +1521,14 @@ export const getJoinHostedMatchUrl = (matchId: string) => {
 
 export const joinHostedMatch = async (
   matchId: string,
+  joinHostedMatchBody: JoinHostedMatchBody,
   options?: RequestInit,
 ): Promise<HostedMatchParticipant> => {
   return customFetch<HostedMatchParticipant>(getJoinHostedMatchUrl(matchId), {
     ...options,
     method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(joinHostedMatchBody),
   });
 };
 
@@ -1535,14 +1539,14 @@ export const getJoinHostedMatchMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof joinHostedMatch>>,
     TError,
-    { matchId: string },
+    { matchId: string; data: JoinHostedMatchBody },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof joinHostedMatch>>,
   TError,
-  { matchId: string },
+  { matchId: string; data: JoinHostedMatchBody },
   TContext
 > => {
   const mutationKey = ["joinHostedMatch"];
@@ -1556,11 +1560,11 @@ export const getJoinHostedMatchMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof joinHostedMatch>>,
-    { matchId: string }
+    { matchId: string; data: JoinHostedMatchBody }
   > = (props) => {
-    const { matchId } = props ?? {};
+    const { matchId, data } = props ?? {};
 
-    return joinHostedMatch(matchId, requestOptions);
+    return joinHostedMatch(matchId, data, requestOptions);
   };
 
   return { mutationFn, ...mutationOptions };
@@ -1582,14 +1586,14 @@ export const useJoinHostedMatch = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof joinHostedMatch>>,
     TError,
-    { matchId: string },
+    { matchId: string; data: JoinHostedMatchBody },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
   Awaited<ReturnType<typeof joinHostedMatch>>,
   TError,
-  { matchId: string },
+  { matchId: string; data: JoinHostedMatchBody },
   TContext
 > => {
   return useMutation(getJoinHostedMatchMutationOptions(options));

@@ -4,13 +4,14 @@ import {
   useListAdminOwnerLeads, useApproveVenue, useSetVenueFeatured,
   useUpdateOwnerLeadStatus, useGetMyProfile
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatSportLabel } from "@/lib/sport-utils";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -67,16 +68,41 @@ export default function Admin() {
   const [updatingLeadId, setUpdatingLeadId] = useState<string | null>(null);
   const [convertingLeadId, setConvertingLeadId] = useState<string | null>(null);
   const [activatingVenueId, setActivatingVenueId] = useState<string | null>(null);
+  const [convertedOwnerLinks, setConvertedOwnerLinks] = useState<Record<string, boolean>>({});
 
   const { data: profile, isLoading: profileLoading } = useGetMyProfile();
   const { data: stats, isLoading: statsLoading } = useGetAdminStats();
   const { data: usersData, isLoading: usersLoading } = useListAdminUsers({});
   const { data: venues, isLoading: venuesLoading } = useListAdminVenues();
-  const { data: leads, isLoading: leadsLoading } = useListAdminOwnerLeads();
+
+  const { data: onboardingItems = [], isLoading: onboardingLoading } = useQuery({
+    queryKey: ["/api/admin/onboarding"],
+    queryFn: () => adminFetch<any[]>("/admin/onboarding"),
+    enabled: !!profile?.isAdmin,
+  });
+
+  const [selectedOnboardingId, setSelectedOnboardingId] = useState<string | null>(null);
+  const selectedItem = onboardingItems.find((i: any) => i.lead.id === selectedOnboardingId);
+
+  const updateDraftMutation = useMutation({
+    mutationFn: (data: { leadId: string, payload: any }) => 
+      adminFetch(`/admin/onboarding/${data.leadId}`, { method: "PATCH", body: JSON.stringify(data.payload) }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/admin/onboarding"] }),
+  });
+
+  const goLiveMutation = useMutation({
+    mutationFn: (leadId: string) => adminFetch(`/admin/onboarding/${leadId}/go-live`, { method: "POST" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/onboarding"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/venues"] });
+      setSelectedOnboardingId(null);
+      toast({ title: "Venue activated and owner onboarded successfully!" });
+    },
+    onError: (e: any) => toast({ title: e.message, variant: "destructive" }),
+  });
 
   const approveVenue = useApproveVenue();
   const setFeatured = useSetVenueFeatured();
-  const updateLeadStatus = useUpdateOwnerLeadStatus();
 
   // ── Cities state ──────────────────────────────────────────────────────────
   const [cities, setCities] = useState<City[]>([]);
@@ -302,29 +328,7 @@ export default function Admin() {
     finally { setUpdatingVenueId(null); }
   };
 
-  const handleLeadStatus = async (leadId: string, status: string) => {
-    setUpdatingLeadId(leadId);
-    try {
-      await updateLeadStatus.mutateAsync({ leadId, data: { status: status as any } });
-      await queryClient.invalidateQueries({ queryKey: ["/api/admin/owner-leads"] });
-      toast({ title: "Lead status updated" });
-    } catch { toast({ title: "Failed to update lead", variant: "destructive" }); }
-    finally { setUpdatingLeadId(null); }
-  };
 
-  const handleConvertLead = async (leadId: string) => {
-    setConvertingLeadId(leadId);
-    try {
-      const result = await adminFetch<{ success: boolean; venueId: string; venueName: string }>(
-        `/admin/owner-leads/${leadId}/convert`,
-        { method: "POST" }
-      );
-      await queryClient.invalidateQueries({ queryKey: ["/api/admin/owner-leads"] });
-      await queryClient.invalidateQueries({ queryKey: ["/api/admin/venues"] });
-      toast({ title: `Venue "${result.venueName}" created — ID ${result.venueId.slice(0, 8)}…` });
-    } catch (e: any) { toast({ title: e.message, variant: "destructive" }); }
-    finally { setConvertingLeadId(null); }
-  };
 
   const handleActivateVenue = async (venueId: string) => {
     setActivatingVenueId(venueId);
@@ -355,9 +359,28 @@ export default function Admin() {
         method: "PATCH",
         body: JSON.stringify({ status: "paid" }),
       });
-      setPayouts((prev) => prev.map((p) => p.id === payoutId ? { ...p, status: "paid" } : p));
+      setPayouts((prev) => prev.map((p) => p.id === payoutId ? { ...p, status: "paid", paidAt: new Date().toISOString() } : p));
       toast({ title: "Payout marked as paid" });
     } catch { toast({ title: "Failed to update payout", variant: "destructive" }); }
+  };
+
+  const [settlingVenueId, setSettlingVenueId] = useState<string | null>(null);
+  
+  const handleSettleVenue = async (venueId: string) => {
+    setSettlingVenueId(venueId);
+    try {
+      const res = await adminFetch<{ settledCount: number, totalAmount: number }>("/admin/payouts/settle-venue", {
+        method: "POST",
+        body: JSON.stringify({ venueId, notes: "Admin batched settlement" }),
+      });
+      setPayouts((prev) => prev.map((p) => p.venueId === venueId && p.status === "pending" ? { ...p, status: "paid", paidAt: new Date().toISOString() } : p));
+      toast({ title: "Settlement Complete", description: `Settled ${res.settledCount} payouts for ₹${res.totalAmount}` });
+      loadFinance(); // reload stats
+    } catch (e: any) {
+      toast({ title: e.message, variant: "destructive" });
+    } finally {
+      setSettlingVenueId(null);
+    }
   };
 
   const handleCreateCoupon = async () => {
@@ -394,7 +417,7 @@ export default function Admin() {
     } catch { toast({ title: "Failed to update coupon", variant: "destructive" }); }
   };
 
-  const pendingVenues = venues?.filter((v) => !v.isApproved) ?? [];
+  const pendingVenues = venues?.filter((v) => !v.isApproved && !(v as any).isOnboardingDraft) ?? [];
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-7xl min-h-screen">
@@ -455,8 +478,8 @@ export default function Admin() {
           <TabsTrigger value="venues" className="font-bold uppercase tracking-wider text-xs">
             Venues {pendingVenues.length > 0 && <Badge className="ml-1 bg-yellow-500 text-black text-[10px]">{pendingVenues.length}</Badge>}
           </TabsTrigger>
-          <TabsTrigger value="leads" className="font-bold uppercase tracking-wider text-xs">
-            Owner CRM {stats?.newOwnerLeads ? <Badge className="ml-1 bg-primary text-black text-[10px]">{stats.newOwnerLeads}</Badge> : null}
+          <TabsTrigger value="onboarding" className="font-bold uppercase tracking-wider text-xs">
+            Onboarding {onboardingItems?.length > 0 ? <Badge className="ml-1 bg-primary text-black text-[10px]">{onboardingItems.length}</Badge> : null}
           </TabsTrigger>
           <TabsTrigger value="users" className="font-bold uppercase tracking-wider text-xs">Users</TabsTrigger>
           <TabsTrigger value="cities" className="font-bold uppercase tracking-wider text-xs">
@@ -537,10 +560,25 @@ export default function Admin() {
                     </TableCell>
                     <TableCell>
                       {!v.isApproved ? (
-                        <Button size="sm" disabled={activatingVenueId === v.id}
-                          onClick={() => handleActivateVenue(v.id)} className="h-8 text-xs font-bold uppercase bg-primary text-black hover:bg-primary/90">
-                          <Zap className="w-3 h-3 mr-1" /> Activate
-                        </Button>
+                        <div className="flex flex-col gap-2">
+                          <div className="flex flex-col gap-1 text-[10px] text-muted-foreground bg-muted/20 p-2 rounded w-max">
+                            <div className="font-bold mb-1 uppercase">Setup Checklist</div>
+                            <div className="flex items-center gap-1">{(v as any).setupChecklist?.hasPricing ? "✓" : "✗"} Pricing</div>
+                            <div className="flex items-center gap-1">{(v as any).setupChecklist?.hasHours ? "✓" : "✗"} Hours</div>
+                            <div className="flex items-center gap-1">{(v as any).setupChecklist?.hasSports ? "✓" : "✗"} Sports</div>
+                            <div className="flex items-center gap-1">{(v as any).setupChecklist?.hasImages ? "✓" : "✗"} Images</div>
+                            <div className="flex items-center gap-1">{(v as any).setupChecklist?.hasOwnerLinked ? "✓" : "✗"} Owner</div>
+                          </div>
+                          <div>
+                            <Button size="sm" disabled={activatingVenueId === v.id || !(v as any).setupChecklist?.isReadyForActivation}
+                              onClick={() => handleActivateVenue(v.id)} className="h-8 text-xs font-bold uppercase bg-primary text-black hover:bg-primary/90 w-full">
+                              <Zap className="w-3 h-3 mr-1" /> Activate
+                            </Button>
+                            {!(v as any).setupChecklist?.isReadyForActivation && (
+                              <div className="text-[10px] text-destructive mt-1 text-center font-bold">Setup Incomplete</div>
+                            )}
+                          </div>
+                        </div>
                       ) : (
                         <Button size="sm" variant="destructive" disabled={updatingVenueId === v.id}
                           onClick={() => handleApprove(v.id, false)} className="h-8 text-xs font-bold uppercase">
@@ -555,76 +593,63 @@ export default function Admin() {
           </div>
         </TabsContent>
 
-        {/* ── Owner CRM tab ──────────────────────────────────────────────────── */}
-        <TabsContent value="leads">
+        {/* ── Onboarding tab ────────────────────────────────────────────────── */}
+        <TabsContent value="onboarding">
           <div className="rounded-lg border border-border/50 overflow-hidden bg-card/30">
             <Table>
               <TableHeader className="bg-muted/60">
                 <TableRow>
-                  <TableHead>Venue</TableHead>
-                  <TableHead>Owner</TableHead>
-                  <TableHead>Phone</TableHead>
-                  <TableHead>City</TableHead>
-                  <TableHead>Sports</TableHead>
-                  <TableHead>Submitted</TableHead>
+                  <TableHead>Lead</TableHead>
+                  <TableHead>Contact</TableHead>
+                  <TableHead>Draft Venue</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Checklist</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {leadsLoading ? (
-                  <TableRow><TableCell colSpan={8} className="text-center py-8"><Skeleton className="h-8 w-full" /></TableCell></TableRow>
-                ) : leads?.length ? (
-                  leads.map((lead) => (
-                    <TableRow key={lead.id}>
-                      <TableCell className="font-semibold">{lead.venueName}</TableCell>
-                      <TableCell className="text-muted-foreground">{lead.ownerName}</TableCell>
-                      <TableCell className="font-mono text-sm">{lead.phone}</TableCell>
-                      <TableCell>{lead.city}</TableCell>
+                {onboardingLoading ? (
+                  <TableRow><TableCell colSpan={6} className="text-center py-8"><Skeleton className="h-8 w-full" /></TableCell></TableRow>
+                ) : onboardingItems?.length ? (
+                  onboardingItems.map((item: any) => (
+                    <TableRow key={item.lead.id} className="cursor-pointer hover:bg-muted/10" onClick={() => setSelectedOnboardingId(item.lead.id)}>
                       <TableCell>
-                        <div className="flex gap-1 flex-wrap">
-                          {lead.sports.slice(0, 2).map((s) => (
-                            <Badge key={s} variant="outline" className="text-[10px]">{s}</Badge>
-                          ))}
+                        <div className="font-semibold">{item.lead.venueName}</div>
+                        <div className="text-xs text-muted-foreground">{item.lead.city}</div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm">{item.lead.ownerName}</div>
+                        <div className="font-mono text-xs text-muted-foreground">{item.lead.phone}</div>
+                      </TableCell>
+                      <TableCell>
+                        {item.draftVenue ? (
+                          <Badge variant="outline" className="text-[10px] uppercase font-bold border-primary text-primary">Draft Saved</Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground italic">No draft yet</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary" className="uppercase text-[10px] font-bold">{item.lead.status}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1 text-[10px]">
+                          <span className={item.setupChecklist.hasPricing ? "text-green-500" : "text-muted-foreground"}>₹</span>
+                          <span className={item.setupChecklist.hasHours ? "text-green-500" : "text-muted-foreground"}>⌚</span>
+                          <span className={item.setupChecklist.hasSports ? "text-green-500" : "text-muted-foreground"}>⚽</span>
+                          <span className={item.setupChecklist.hasImages ? "text-green-500" : "text-muted-foreground"}>🖼️</span>
+                          <span className={item.setupChecklist.hasOwnerLinked ? "text-green-500" : "text-muted-foreground"}>👤</span>
                         </div>
                       </TableCell>
-                      <TableCell className="text-muted-foreground text-sm">
-                        {new Date(lead.createdAt).toLocaleDateString("en-IN")}
-                      </TableCell>
                       <TableCell>
-                        <Select value={lead.status} disabled={updatingLeadId === lead.id || lead.status === "onboarded"}
-                          onValueChange={(v) => handleLeadStatus(lead.id, v)}>
-                          <SelectTrigger className="h-8 w-32 text-xs font-bold uppercase">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="new">New</SelectItem>
-                            <SelectItem value="qualified">Qualified</SelectItem>
-                            <SelectItem value="onboarded">Onboarded</SelectItem>
-                            <SelectItem value="rejected">Rejected</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell>
-                        {(lead as any).venueId ? (
-                          <Badge variant="outline" className="text-[10px] font-mono gap-1 cursor-default">
-                            <CheckCircle className="w-3 h-3 text-green-500" />
-                            Venue linked
-                          </Badge>
-                        ) : (lead.status === "new" || lead.status === "qualified") ? (
-                          <Button size="sm" disabled={convertingLeadId === lead.id}
-                            onClick={() => handleConvertLead(lead.id)}
-                            className="h-8 text-xs font-bold uppercase bg-primary text-black hover:bg-primary/90">
-                            <Sprout className="w-3 h-3 mr-1" />
-                            {convertingLeadId === lead.id ? "Converting…" : "Convert"}
-                          </Button>
-                        ) : null}
+                        <Button size="sm" className="h-7 text-xs font-bold uppercase" onClick={(e) => { e.stopPropagation(); setSelectedOnboardingId(item.lead.id); }}>
+                          Open Draft
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">No owner leads yet.</TableCell>
+                    <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">No onboarding leads.</TableCell>
                   </TableRow>
                 )}
               </TableBody>
@@ -746,55 +771,106 @@ export default function Admin() {
               ) : null}
             </div>
 
-            <div>
-              <h3 className="text-lg font-bold uppercase italic mb-4">Venue Payout Ledger</h3>
-              <div className="rounded-lg border border-border/50 overflow-hidden bg-card/30">
-                <Table>
-                  <TableHeader className="bg-muted/60">
-                    <TableRow>
-                      <TableHead>Venue</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Gross</TableHead>
-                      <TableHead>Commission</TableHead>
-                      <TableHead>Payable</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Action</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {financeLoading ? (
-                      <TableRow><TableCell colSpan={7} className="text-center py-8"><Skeleton className="h-8 w-full" /></TableCell></TableRow>
-                    ) : payouts.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">No payout records yet.</TableCell>
-                      </TableRow>
-                    ) : payouts.map((p) => (
-                      <TableRow key={p.id}>
-                        <TableCell className="font-semibold">{p.venueName}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="text-[10px] uppercase">{p.referenceType}</Badge>
-                        </TableCell>
-                        <TableCell className="font-mono">₹{p.grossAmount.toLocaleString("en-IN")}</TableCell>
-                        <TableCell className="font-mono text-muted-foreground">₹{p.platformCommission.toLocaleString("en-IN")}</TableCell>
-                        <TableCell className="font-mono font-bold text-primary">₹{p.venuePayable.toLocaleString("en-IN")}</TableCell>
-                        <TableCell>
-                          <Badge variant={p.status === "paid" ? "default" : p.status === "hold" ? "destructive" : "secondary"}
-                            className="uppercase text-[10px] font-bold">
-                            {p.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {p.status === "pending" && (
-                            <Button size="sm" className="h-7 text-xs font-bold uppercase"
-                              onClick={() => handleMarkPayoutPaid(p.id)}>
-                              Mark Paid
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-lg font-bold uppercase italic mb-4">Pending Settlements</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {financeLoading ? (
+                    <Skeleton className="h-24 w-full" />
+                  ) : (() => {
+                    const pendingByVenue = payouts
+                      .filter(p => p.status === "pending")
+                      .reduce((acc, p) => {
+                        if (!acc[p.venueId]) {
+                          acc[p.venueId] = { venueName: p.venueName, total: 0, count: 0, venueId: p.venueId };
+                        }
+                        acc[p.venueId].total += p.venuePayable;
+                        acc[p.venueId].count += 1;
+                        return acc;
+                      }, {} as Record<string, { venueName: string, total: number, count: number, venueId: string }>);
+                    
+                    const batches = Object.values(pendingByVenue);
+                    
+                    if (batches.length === 0) {
+                      return <div className="text-sm text-muted-foreground italic col-span-full">No pending settlements.</div>;
+                    }
+                    
+                    return batches.map(b => (
+                      <Card key={b.venueId} className="bg-card/50 border-border/50">
+                        <CardContent className="p-4 flex flex-col justify-between h-full">
+                          <div>
+                            <div className="font-bold text-lg">{b.venueName}</div>
+                            <div className="text-xs text-muted-foreground uppercase">{b.count} Pending Payouts</div>
+                          </div>
+                          <div className="flex items-end justify-between mt-4">
+                            <div className="text-2xl font-extrabold text-primary">₹{b.total.toLocaleString("en-IN")}</div>
+                            <Button 
+                              size="sm" 
+                              className="font-bold uppercase" 
+                              disabled={settlingVenueId === b.venueId}
+                              onClick={() => handleSettleVenue(b.venueId)}
+                            >
+                              Settle Batch
                             </Button>
-                          )}
-                        </TableCell>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ));
+                  })()}
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-lg font-bold uppercase italic mb-4">Payout Ledger History</h3>
+                <div className="rounded-lg border border-border/50 overflow-hidden bg-card/30">
+                  <Table>
+                    <TableHeader className="bg-muted/60">
+                      <TableRow>
+                        <TableHead>Venue</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Gross</TableHead>
+                        <TableHead>Commission</TableHead>
+                        <TableHead>Payable</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Action</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {financeLoading ? (
+                        <TableRow><TableCell colSpan={7} className="text-center py-8"><Skeleton className="h-8 w-full" /></TableCell></TableRow>
+                      ) : payouts.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">No payout records yet.</TableCell>
+                        </TableRow>
+                      ) : payouts.map((p) => (
+                        <TableRow key={p.id}>
+                          <TableCell className="font-semibold">{p.venueName}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="text-[10px] uppercase">{p.referenceType}</Badge>
+                          </TableCell>
+                          <TableCell className="font-mono">₹{p.grossAmount.toLocaleString("en-IN")}</TableCell>
+                          <TableCell className="font-mono text-muted-foreground">₹{p.platformCommission.toLocaleString("en-IN")}</TableCell>
+                          <TableCell className="font-mono font-bold text-primary">₹{p.venuePayable.toLocaleString("en-IN")}</TableCell>
+                          <TableCell>
+                            <Badge variant={p.status === "paid" ? "default" : p.status === "hold" ? "destructive" : "secondary"}
+                              className="uppercase text-[10px] font-bold">
+                              {p.status}
+                            </Badge>
+                            {p.paidAt && <div className="text-[10px] text-muted-foreground mt-1">{new Date(p.paidAt).toLocaleDateString("en-IN")}</div>}
+                          </TableCell>
+                          <TableCell>
+                            {p.status === "pending" && (
+                              <Button size="sm" className="h-7 text-xs font-bold uppercase"
+                                onClick={() => handleMarkPayoutPaid(p.id)}>
+                                Mark Paid
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
             </div>
           </div>
@@ -1730,6 +1806,86 @@ export default function Admin() {
         </TabsContent>
 
       </Tabs>
+
+      <Sheet open={!!selectedOnboardingId} onOpenChange={(open) => !open && setSelectedOnboardingId(null)}>
+        <SheetContent className="w-[400px] sm:w-[540px] overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle className="uppercase italic text-xl">Draft Venue Onboarding</SheetTitle>
+            <SheetDescription>Autosaves on blur. Complete all fields to Go-Live.</SheetDescription>
+          </SheetHeader>
+          {selectedItem && (
+            <div className="py-6 space-y-6">
+              <div className="grid grid-cols-2 gap-4 bg-muted/20 p-4 rounded-lg text-sm">
+                <div><div className="font-bold uppercase text-[10px] text-muted-foreground">Lead Venue</div><div>{selectedItem.lead.venueName}</div></div>
+                <div><div className="font-bold uppercase text-[10px] text-muted-foreground">Owner</div><div>{selectedItem.lead.ownerName}</div><div className="font-mono text-xs">{selectedItem.lead.phone}</div></div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-bold uppercase text-muted-foreground">Venue Name</label>
+                  <Input defaultValue={selectedItem.draftVenue?.name || selectedItem.lead.venueName}
+                    onBlur={(e) => updateDraftMutation.mutate({ leadId: selectedItem.lead.id, payload: { name: e.target.value } })} />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-bold uppercase text-muted-foreground">Price per hour (₹)</label>
+                    <Input type="number" defaultValue={selectedItem.draftVenue?.pricePerHour || 0}
+                      onBlur={(e) => updateDraftMutation.mutate({ leadId: selectedItem.lead.id, payload: { pricePerHour: Number(e.target.value) } })} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold uppercase text-muted-foreground">Slot Interval (mins)</label>
+                    <Input type="number" defaultValue={selectedItem.draftVenue?.slotIntervalMins || 60}
+                      onBlur={(e) => updateDraftMutation.mutate({ leadId: selectedItem.lead.id, payload: { slotIntervalMins: Number(e.target.value) } })} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-bold uppercase text-muted-foreground">Open Time</label>
+                    <Input type="time" defaultValue={selectedItem.draftVenue?.openTime || "00:00"}
+                      onBlur={(e) => updateDraftMutation.mutate({ leadId: selectedItem.lead.id, payload: { openTime: e.target.value } })} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold uppercase text-muted-foreground">Close Time</label>
+                    <Input type="time" defaultValue={selectedItem.draftVenue?.closeTime || "00:00"}
+                      onBlur={(e) => updateDraftMutation.mutate({ leadId: selectedItem.lead.id, payload: { closeTime: e.target.value } })} />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase text-muted-foreground">Sports (comma separated)</label>
+                  <Input defaultValue={(selectedItem.draftVenue?.sports || selectedItem.lead.sports || []).join(", ")}
+                    onBlur={(e) => updateDraftMutation.mutate({ leadId: selectedItem.lead.id, payload: { sports: e.target.value.split(",").map((s: string) => s.trim()).filter(Boolean) } })} />
+                </div>
+                <div>
+                  <label className="text-xs font-bold uppercase text-muted-foreground">Images (comma separated URLs)</label>
+                  <Input defaultValue={(selectedItem.draftVenue?.images || []).join(", ")}
+                    onBlur={(e) => updateDraftMutation.mutate({ leadId: selectedItem.lead.id, payload: { images: e.target.value.split(",").map((s: string) => s.trim()).filter(Boolean) } })} />
+                </div>
+              </div>
+
+              <div className="bg-muted/30 p-4 rounded-lg space-y-3 border border-border/50">
+                <h4 className="font-bold uppercase text-xs">Setup Checklist</h4>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="flex items-center gap-2">{selectedItem.setupChecklist.hasPricing ? <CheckCircle className="w-4 h-4 text-green-500" /> : <XCircle className="w-4 h-4 text-muted-foreground" />} Pricing {">"} 0</div>
+                  <div className="flex items-center gap-2">{selectedItem.setupChecklist.hasHours ? <CheckCircle className="w-4 h-4 text-green-500" /> : <XCircle className="w-4 h-4 text-muted-foreground" />} Valid Hours</div>
+                  <div className="flex items-center gap-2">{selectedItem.setupChecklist.hasSports ? <CheckCircle className="w-4 h-4 text-green-500" /> : <XCircle className="w-4 h-4 text-muted-foreground" />} Sports Added</div>
+                  <div className="flex items-center gap-2">{selectedItem.setupChecklist.hasImages ? <CheckCircle className="w-4 h-4 text-green-500" /> : <XCircle className="w-4 h-4 text-muted-foreground" />} Images Added</div>
+                  <div className="flex items-center gap-2">{selectedItem.setupChecklist.hasOwnerLinked ? <CheckCircle className="w-4 h-4 text-green-500" /> : <XCircle className="w-4 h-4 text-muted-foreground" />} Owner Account Found</div>
+                </div>
+                {updateDraftMutation.isPending && <div className="text-xs text-primary font-bold animate-pulse mt-2">Saving draft...</div>}
+              </div>
+
+              <Button className="w-full font-bold uppercase h-12"
+                disabled={!selectedItem.setupChecklist.isReadyForActivation || goLiveMutation.isPending}
+                onClick={() => goLiveMutation.mutate(selectedItem.lead.id)}>
+                {goLiveMutation.isPending ? "Activating..." : "Approve & Go-Live"}
+              </Button>
+              {!selectedItem.setupChecklist.isReadyForActivation && (
+                <p className="text-xs text-center text-destructive font-bold">Complete all checklist items to activate.</p>
+              )}
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

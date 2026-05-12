@@ -37,6 +37,7 @@ export const venuesTable = pgTable("venues", {
   totalReviews: integer("total_reviews").notNull().default(0),
   isApproved: boolean("is_approved").notNull().default(false),
   isFeatured: boolean("is_featured").notNull().default(false),
+  isOnboardingDraft: boolean("is_onboarding_draft").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

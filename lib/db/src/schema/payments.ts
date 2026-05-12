@@ -2,6 +2,7 @@ import {
   pgTable,
   text,
   numeric,
+  integer,
   timestamp,
   uuid,
   pgEnum,
@@ -21,9 +22,23 @@ export const paymentTypeEnum = pgEnum("payment_type", [
 
 export const paymentStatusEnum = pgEnum("payment_status", [
   "pending",
-  "success",
+  "payment_initiated",
+  "payment_authorized",
+  "payment_captured",
+  "verified",
+  "success", // Keeping for backwards compat during transition
   "failed",
+  "expired",
   "refunded",
+  "partially_refunded",
+]);
+
+export const paymentReviewStatusEnum = pgEnum("payment_review_status", [
+  "none",
+  "refund_required",
+  "refund_processing",
+  "refunded",
+  "reconciliation_required",
 ]);
 
 export const paymentsTable = pgTable("payments", {
@@ -37,7 +52,24 @@ export const paymentsTable = pgTable("payments", {
   razorpayPaymentId: text("razorpay_payment_id"),
   razorpaySignature: text("razorpay_signature"),
   amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  paymentCategory: text("payment_category", {
+    enum: [
+      "booking",
+      "host_commitment",
+      "match_reserve",
+      "match_final",
+      "wallet",
+      "refund"
+    ]
+  }),
+  grossAmount: integer("gross_amount").default(0).notNull(),
+  hostFeeComponent: integer("host_fee_component").default(0).notNull(),
+  reserveFeeComponent: integer("reserve_fee_component").default(0).notNull(),
+  finalFeeComponent: integer("final_fee_component").default(0).notNull(),
+  walletComponent: integer("wallet_component").default(0).notNull(),
+  refundComponent: integer("refund_component").default(0).notNull(),
   status: paymentStatusEnum("status").notNull().default("pending"),
+  reviewStatus: paymentReviewStatusEnum("review_status").notNull().default("none"),
   metadata: text("metadata"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

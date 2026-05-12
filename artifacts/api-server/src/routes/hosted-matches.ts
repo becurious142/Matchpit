@@ -10,9 +10,11 @@ import {
   slotsTable,
   notificationsTable,
 } from "@workspace/db";
-import { eq, and, desc, ne, count } from "drizzle-orm";
+import { eq, desc, and, ne, count, sql } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 import { razorpay, verifyRazorpaySignature, getRazorpayKeyId } from "../lib/razorpay";
+import { reverseMatchPayouts } from "../lib/payouts";
+import { FINAL_PAYMENT_DEADLINE_HOURS } from "../lib/post-payment";
 
 const router: IRouter = Router();
 
@@ -302,10 +304,23 @@ router.post("/hosted-matches", requireAuth, async (req, res) => {
     }
 
     // Commerce math
-    const totalVenueCost = Number(venue.pricePerHour);
-    const reserveFee = Math.ceil(totalVenueCost / totalPlayers / 2);
-    const finalFeePerPlayer = Math.ceil(totalVenueCost / totalPlayers);
-    const hostFee = 99;
+    let computedVenueCost = Number(slot.priceOverride);
+    if (!slot.priceOverride) {
+      const d = new Date(slot.date);
+      const dayOfWeek = d.getDay();
+      if (dayOfWeek === 0 || dayOfWeek === 6) computedVenueCost = Number(venue.weekendPrice);
+      else {
+        const hour = parseInt(slot.startTime.split(":")[0]!, 10);
+        if (hour < 10) computedVenueCost = Number(venue.weekdayMorningPrice);
+        else if (hour < 17) computedVenueCost = Number(venue.weekdayDayPrice);
+        else computedVenueCost = Number(venue.weekdayEveningPrice);
+      }
+    }
+    const totalVenueCost = computedVenueCost || Number(venue.pricePerHour) || 0;
+    const reserveFeePerPlayer = Math.ceil(totalVenueCost / totalPlayers / 2);
+    const finalFeePerPlayer = Math.ceil(totalVenueCost / totalPlayers) - reserveFeePerPlayer;
+    const hostFee = 49;
+    const hostCommitmentGross = reserveFeePerPlayer + hostFee;
 
     // C4: Single transaction — payment + slot hold + match creation
     // If any step throws, the entire transaction rolls back automatically.
@@ -319,7 +334,14 @@ router.post("/hosted-matches", requireAuth, async (req, res) => {
           razorpayOrderId,
           razorpayPaymentId,
           razorpaySignature,
-          amount: hostFee.toString(),
+          amount: String(hostCommitmentGross),
+          paymentCategory: "host_commitment",
+          grossAmount: hostCommitmentGross,
+          hostFeeComponent: hostFee,
+          reserveFeeComponent: reserveFeePerPlayer,
+          finalFeeComponent: 0,
+          walletComponent: 0,
+          refundComponent: 0,
           status: "success",
         })
         .returning();
@@ -344,9 +366,16 @@ router.post("/hosted-matches", requireAuth, async (req, res) => {
           totalPlayers,
           minPlayers,
           skillLevel: skillLevel ?? "any",
-          reserveFee: reserveFee.toString(),
+          reserveFee: reserveFeePerPlayer.toString(),
           finalFeePerPlayer: finalFeePerPlayer.toString(),
-          totalVenueCost: totalVenueCost.toString(),
+          totalVenueCost,
+          hostFee: hostFee.toString(),
+          grossHostCollected: hostCommitmentGross,
+          grossReserveCollected: 0,
+          grossFinalCollected: 0,
+          totalCollected: hostCommitmentGross,
+          platformFeeTotal: hostFee,
+          refundExposure: hostCommitmentGross,
           notes: notes ?? null,
           status: "open",
           hostPaymentId: payment.id,
@@ -545,6 +574,12 @@ router.post("/hosted-matches/:matchId/join", requireAuth, async (req, res) => {
       return;
     }
 
+    const { reservePaymentId, reservePaidAmount } = req.body;
+    if (!reservePaymentId || typeof reservePaidAmount !== "number") {
+      res.status(400).json({ error: "validation", message: "reservePaymentId and reservePaidAmount are required" });
+      return;
+    }
+
     // Create participant record
     const [participant] = await db
       .insert(hostedMatchParticipantsTable)
@@ -552,19 +587,43 @@ router.post("/hosted-matches/:matchId/join", requireAuth, async (req, res) => {
         matchId,
         userId: profile.id,
         status: "reserved",
+        reservePaymentId,
+        finalPaymentId: null,
+        reservePaidAmount,
+        finalPaidAmount: 0,
+        paymentStatus: "reserve_paid",
       })
       .returning();
 
-    // Increment player count
+    // Increment player count and finance
     const newCount = match.currentPlayers + 1;
+    const nowBecomesConfirmed = newCount >= match.minPlayers && match.status === "open";
     await db
       .update(hostedMatchesTable)
       .set({
         currentPlayers: newCount,
         status: newCount >= match.minPlayers ? "confirmed" : "open",
+        grossReserveCollected: sql`${hostedMatchesTable.grossReserveCollected} + ${reservePaidAmount}`,
+        totalCollected: sql`${hostedMatchesTable.totalCollected} + ${reservePaidAmount}`,
+        refundExposure: sql`${hostedMatchesTable.refundExposure} + ${reservePaidAmount}`,
         updatedAt: new Date(),
       })
       .where(eq(hostedMatchesTable.id, matchId));
+
+    // PATCH 4 — Assign finalPaymentDeadline to all reserved participants when match first becomes confirmed
+    if (nowBecomesConfirmed) {
+      const deadline = new Date();
+      deadline.setHours(deadline.getHours() + FINAL_PAYMENT_DEADLINE_HOURS);
+      await db
+        .update(hostedMatchParticipantsTable)
+        .set({ finalPaymentDeadline: deadline, updatedAt: new Date() })
+        .where(
+          and(
+            eq(hostedMatchParticipantsTable.matchId, matchId),
+            eq(hostedMatchParticipantsTable.paymentStatus, "reserve_paid"),
+          ),
+        );
+    }
 
     // Notifications
     await db.insert(notificationsTable).values({
@@ -834,53 +893,82 @@ router.post("/:matchId/cancel", requireAuth, async (req, res) => {
         ),
       );
 
-    // C1: Issue refunds for deposited participants — awaited before response
-    const cancelReason = reason ?? "Match cancelled by host";
-    for (const p of participants) {
-      if (["reserved", "final_paid"].includes(p.status) && p.reservePaymentId) {
+    // HM10 PATCH 5: Refund Atomicity
+    // Entire cancellation, refund processing, and payout reversal wrapped in a single transaction
+    const updated = await db.transaction(async (tx) => {
+      // C1: Issue refunds using actual tracked amounts
+      const cancelReason = reason ?? "Match cancelled by host";
+      for (const p of participants) {
+        if (["reserved", "final_paid"].includes(p.status) || ["reserve_paid", "final_paid"].includes(p.paymentStatus)) {
+          try {
+            const refundAmount = (p.reservePaidAmount || 0) + (p.finalPaidAmount || 0);
+            if (refundAmount > 0) {
+              const { processCancellationRefund } = await import("../lib/wallet");
+              await processCancellationRefund(
+                p.userId,
+                p.id,
+                "hosted_match",
+                refundAmount,
+                tx as any
+              );
+            }
+            
+            await tx
+              .update(hostedMatchParticipantsTable)
+              .set({ paymentStatus: "refunded", status: "cancelled", updatedAt: new Date() })
+              .where(eq(hostedMatchParticipantsTable.id, p.id));
+          } catch (e) {
+            req.log.error({ err: e, participantId: p.id }, "Failed to refund participant on cancel — manual review required");
+            // HM10: Bubble up error so tx fails atomically instead of leaving partial state
+            throw e;
+          }
+        }
+      }
+
+      // Refund host
+      if (match.grossHostCollected > 0) {
         try {
           const { processCancellationRefund } = await import("../lib/wallet");
           await processCancellationRefund(
-            p.userId,
-            p.id,
+            match.hostUserId,
+            match.id,
             "hosted_match",
-            Number(match.reserveFee ?? 0),
+            match.grossHostCollected,
+            tx as any
           );
         } catch (e) {
-          req.log.error({ err: e, participantId: p.id }, "Failed to refund participant on cancel — manual review required");
+          req.log.error({ err: e, matchId }, "Failed to refund host on cancel — manual review required");
+          throw e;
         }
       }
-    }
 
-    // Mark all non-dropped participants as cancelled
-    await db
-      .update(hostedMatchParticipantsTable)
-      .set({ status: "cancelled" })
-      .where(
-        and(
-          eq(hostedMatchParticipantsTable.matchId, matchId),
-          ne(hostedMatchParticipantsTable.status, "dropped_unpaid"),
-        ),
-      );
+      // PATCH 5 — Reverse all payout ledger entries so venue is not paid for cancelled match
+      await reverseMatchPayouts(matchId, tx as any);
 
-    // Update match status
-    const [updated] = await db
-      .update(hostedMatchesTable)
-      .set({
-        status: "cancelled",
-        cancelledReason: cancelReason,
-        underfillRefundIssued: true,
-      })
-      .where(eq(hostedMatchesTable.id, matchId))
-      .returning();
+      // Release slot
+      await tx.update(slotsTable).set({ status: "available" }).where(eq(slotsTable.id, match.slotId));
 
-    // Notify host
-    await db.insert(notificationsTable).values({
-      userId: match.hostUserId,
-      type: "match_cancelled",
-      title: "Match Cancelled",
-      body: `Your match has been cancelled. All participants have been refunded.`,
-      referenceId: matchId,
+      // Update match status
+      await tx
+        .update(hostedMatchesTable)
+        .set({
+          status: "cancelled",
+          cancelledReason: cancelReason,
+          refundExposure: 0,
+          underfillRefundIssued: true,
+        })
+        .where(eq(hostedMatchesTable.id, matchId));
+
+      // Notify host
+      await tx.insert(notificationsTable).values({
+        userId: match.hostUserId,
+        type: "match_cancelled",
+        title: "Match Cancelled",
+        body: `Your match has been cancelled. All participants have been refunded.`,
+        referenceId: matchId,
+      });
+
+      return { status: "cancelled", cancelledReason: cancelReason };
     });
 
     res.json({ matchId, status: updated.status, cancelledReason: updated.cancelledReason });
@@ -1074,24 +1162,45 @@ router.post("/hosted-matches/:matchId/rehost", requireAuth, async (req, res) => 
     tomorrow.setDate(tomorrow.getDate() + 7);
     const newDate = tomorrow.toISOString().slice(0, 10);
 
-    const [newMatch] = await db.insert(hostedMatchesTable).values({
-      hostUserId: profile.id,
-      venueId: match.venueId,
-      slotId: match.slotId,
-      sport: match.sport,
-      date: newDate,
-      startTime: match.startTime,
-      endTime: match.endTime,
-      totalPlayers: match.totalPlayers,
-      minPlayers: match.minPlayers,
-      currentPlayers: 0,
-      reserveFee: match.reserveFee,
-      finalFeePerPlayer: match.finalFeePerPlayer,
-      totalVenueCost: match.totalVenueCost,
-      skillLevel: match.skillLevel,
-      notes: match.notes ? `[Rehosted] ${match.notes}` : "Rehosted match",
-      status: "open",
-    }).returning({ id: hostedMatchesTable.id });
+    const [slot] = await db.select({ status: slotsTable.status }).from(slotsTable).where(eq(slotsTable.id, match.slotId)).limit(1);
+    if (!slot) { res.status(404).json({ error: "not_found", message: "Slot not found" }); return; }
+    if (slot.status !== "available") {
+      res.status(409).json({ error: "conflict", message: "Slot no longer available for rehost" });
+      return;
+    }
+
+    const [newMatch] = await db.transaction(async (tx) => {
+      const [inserted] = await tx.insert(hostedMatchesTable).values({
+        hostUserId: profile.id,
+        venueId: match.venueId,
+        slotId: match.slotId,
+        sport: match.sport,
+        date: newDate,
+        startTime: match.startTime,
+        endTime: match.endTime,
+        totalPlayers: match.totalPlayers,
+        minPlayers: match.minPlayers,
+        currentPlayers: 0,
+        hostFee: match.hostFee,
+        reserveFee: match.reserveFee,
+        finalFeePerPlayer: match.finalFeePerPlayer,
+        totalVenueCost: match.totalVenueCost,
+        skillLevel: match.skillLevel,
+        platformFeeTotal: match.platformFeeTotal,
+        notes: match.notes ? `[Rehosted] ${match.notes}` : "Rehosted match",
+        status: "open",
+        financialStatus: "pending",
+        grossHostCollected: 0,
+        grossReserveCollected: 0,
+        grossFinalCollected: 0,
+        totalCollected: 0,
+        refundExposure: 0,
+      }).returning({ id: hostedMatchesTable.id });
+
+      // HM8 FORENSIC PATCH — slot state normalization: REHOST must ONLY use slot.status = 'available'
+      await tx.update(slotsTable).set({ status: "available" }).where(eq(slotsTable.id, match.slotId));
+      return [inserted];
+    });
 
     res.json({ matchId: newMatch.id, date: newDate, message: "New match created from rehost" });
   } catch (err) {

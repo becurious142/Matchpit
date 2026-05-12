@@ -6,8 +6,8 @@ import {
   venuesTable,
   bookingsTable,
   hostedMatchesTable,
-  paymentsTable,
   ownerLeadsTable,
+  venuePayoutLedgerTable,
 } from "@workspace/db";
 import { eq, count, sum, desc, inArray, ne } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
@@ -276,6 +276,81 @@ router.get("/admin/payments", requireAuth, async (req, res) => {
   }
 });
 
+router.get("/admin/finance/settlements", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    // Fetch all venues
+    const venues = await db.select({ id: venuesTable.id, name: venuesTable.name }).from(venuesTable);
+    const venueMap = new Map<string, any>();
+    
+    for (const v of venues) {
+      venueMap.set(v.id, {
+        venueId: v.id,
+        venueName: v.name,
+        totalGross: 0,
+        totalPlatformRevenue: 0,
+        totalGatewayFees: 0,
+        totalVenuePayable: 0,
+        totalReversals: 0,
+        readyForSettlement: 0,
+        pendingRows: 0,
+        completedMatches: 0,
+      });
+    }
+
+    // Fetch all relevant payouts
+    const payouts = await db
+      .select()
+      .from(venuePayoutLedgerTable)
+      .where(inArray(venuePayoutLedgerTable.status, ["pending", "ready_for_settlement"]));
+
+    for (const p of payouts) {
+      const v = venueMap.get(p.venueId);
+      if (!v) continue;
+
+      const gross = Number(p.grossAmount || 0);
+      const isReversal = p.notes?.includes("REVERSAL") || gross < 0;
+
+      if (!isReversal) {
+        v.totalGross += gross;
+      } else {
+        // Track the total reversed amount separately as a positive sum for visibility
+        v.totalReversals += Math.abs(gross);
+      }
+
+      v.totalPlatformRevenue += Number(p.platformCommission || 0);
+      v.totalGatewayFees += Number(p.razorpayFee || 0);
+      v.totalVenuePayable += Number(p.venuePayable || 0);
+
+      if (p.status === "ready_for_settlement") {
+        v.readyForSettlement += Number(p.venuePayable || 0);
+      } else if (p.status === "pending") {
+        v.pendingRows += 1;
+      }
+    }
+
+    // Count completed matches per venue
+    const completedMatches = await db
+      .select({ venueId: hostedMatchesTable.venueId })
+      .from(hostedMatchesTable)
+      .where(eq(hostedMatchesTable.status, "completed"));
+
+    for (const m of completedMatches) {
+      const v = venueMap.get(m.venueId);
+      if (v) {
+        v.completedMatches += 1;
+      }
+    }
+
+    res.json({ venues: Array.from(venueMap.values()) });
+  } catch (err) {
+    req.log.error({ err }, "Error listing settlements");
+    res.status(500).json({ error: "internal_error", message: "Failed to list settlements" });
+  }
+});
+
 // ─── Venue: approve (boolean toggle, kept for backwards compat) ───────────────
 
 router.patch("/admin/venues/:venueId/approve", requireAuth, async (req, res) => {
@@ -335,6 +410,23 @@ router.post("/admin/venues/:venueId/activate", requireAuth, async (req, res) => 
     const [existing] = await db.select().from(venuesTable).where(eq(venuesTable.id, venueId));
     if (!existing) {
       res.status(404).json({ error: "not_found", message: "Venue not found" });
+      return;
+    }
+
+    const hasPricing =
+      existing.weekdayMorningPrice > 0 &&
+      existing.weekdayDayPrice > 0 &&
+      existing.weekdayEveningPrice > 0 &&
+      existing.weekendPrice > 0;
+    const hasHours = !!(existing.openTime && existing.closeTime);
+    const hasSports = Array.isArray(existing.sports) && existing.sports.length > 0;
+    const hasImages = !!(existing.coverImage || (Array.isArray(existing.images) && existing.images.length > 0));
+    const hasOwnerLinked = existing.ownerUserId !== null;
+    const isReadyForActivation =
+      hasPricing && hasHours && hasSports && hasImages && hasOwnerLinked;
+
+    if (!isReadyForActivation) {
+      res.status(400).json({ message: "Venue setup incomplete" });
       return;
     }
 
@@ -410,27 +502,49 @@ router.get("/admin/venues", requireAuth, async (req, res) => {
     const venues = await db.select().from(venuesTable).orderBy(desc(venuesTable.createdAt));
 
     res.json(
-      venues.map((v) => ({
-        id: v.id,
-        name: v.name,
-        city: v.city,
-        address: v.address,
-        sports: v.sports ?? [],
-        pricePerHour: Number(v.pricePerHour),
-        coverImage: v.coverImage ?? null,
-        rating: Number(v.rating),
-        totalReviews: v.totalReviews,
-        isApproved: v.isApproved,
-        isFeatured: v.isFeatured,
-        amenities: v.amenities ?? [],
-        images: v.images ?? [],
-        description: v.description ?? null,
-        openTime: v.openTime,
-        closeTime: v.closeTime,
-        contactPhone: v.contactPhone ?? null,
-        ownerName: v.ownerName ?? null,
-        upcomingMatches: 0,
-      })),
+      venues.map((v) => {
+        const hasPricing =
+          v.weekdayMorningPrice > 0 &&
+          v.weekdayDayPrice > 0 &&
+          v.weekdayEveningPrice > 0 &&
+          v.weekendPrice > 0;
+        const hasHours = !!(v.openTime && v.closeTime);
+        const hasSports = Array.isArray(v.sports) && v.sports.length > 0;
+        const hasImages = !!(v.coverImage || (Array.isArray(v.images) && v.images.length > 0));
+        const hasOwnerLinked = v.ownerUserId !== null;
+        const isReadyForActivation =
+          hasPricing && hasHours && hasSports && hasImages && hasOwnerLinked;
+
+        return {
+          id: v.id,
+          name: v.name,
+          city: v.city,
+          address: v.address,
+          sports: v.sports ?? [],
+          pricePerHour: Number(v.pricePerHour),
+          coverImage: v.coverImage ?? null,
+          rating: Number(v.rating),
+          totalReviews: v.totalReviews,
+          isApproved: v.isApproved,
+          isFeatured: v.isFeatured,
+          amenities: v.amenities ?? [],
+          images: v.images ?? [],
+          description: v.description ?? null,
+          openTime: v.openTime,
+          closeTime: v.closeTime,
+          contactPhone: v.contactPhone ?? null,
+          ownerName: v.ownerName ?? null,
+          upcomingMatches: 0,
+          setupChecklist: {
+            hasPricing,
+            hasHours,
+            hasSports,
+            hasImages,
+            hasOwnerLinked,
+            isReadyForActivation,
+          },
+        };
+      }),
     );
   } catch (err) {
     req.log.error({ err }, "Error listing admin venues");
@@ -528,6 +642,18 @@ router.post("/admin/owner-leads/:leadId/convert", requireAuth, async (req, res) 
       return;
     }
 
+    let ownerUserId: string | null = null;
+    if (lead.phone) {
+      const [profileByPhone] = await db
+        .select()
+        .from(profilesTable)
+        .where(eq(profilesTable.phone, lead.phone));
+      if (profileByPhone) {
+        ownerUserId = profileByPhone.id;
+      }
+    }
+    // Note: ownerLeadsTable doesn't have an email column in this schema, so we only search by phone.
+
     const [venue] = await db
       .insert(venuesTable)
       .values({
@@ -545,6 +671,7 @@ router.post("/admin/owner-leads/:leadId/convert", requireAuth, async (req, res) 
         closeTime: "23:00",
         ownerName: lead.ownerName,
         contactPhone: lead.phone,
+        ownerUserId,
         isApproved: false,
       })
       .returning();
@@ -558,10 +685,267 @@ router.post("/admin/owner-leads/:leadId/convert", requireAuth, async (req, res) 
       success: true,
       venueId: venue.id,
       venueName: venue.name,
+      ownerLinked: !!ownerUserId,
     });
   } catch (err) {
     req.log.error({ err }, "Error converting lead to venue");
     res.status(500).json({ error: "internal_error", message: "Failed to convert lead" });
+  }
+});
+
+// ─── Onboarding Workflow (Batch A7) ──────────────────────────────────────────
+
+function computeSetupChecklist(v: any, ownerUserId: string | null) {
+  const hasPricing =
+    v.weekdayMorningPrice > 0 &&
+    v.weekdayDayPrice > 0 &&
+    v.weekdayEveningPrice > 0 &&
+    v.weekendPrice > 0;
+  const hasHours = !!(v.openTime && v.closeTime);
+  const hasSports = Array.isArray(v.sports) && v.sports.length > 0;
+  const hasImages = !!(v.coverImage || (Array.isArray(v.images) && v.images.length > 0));
+  const hasOwnerLinked = ownerUserId !== null;
+  const isReadyForActivation = hasPricing && hasHours && hasSports && hasImages && hasOwnerLinked;
+
+  return {
+    hasPricing,
+    hasHours,
+    hasSports,
+    hasImages,
+    hasOwnerLinked,
+    isReadyForActivation,
+  };
+}
+
+router.get("/admin/onboarding", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const leads = await db
+      .select()
+      .from(ownerLeadsTable)
+      .where(ne(ownerLeadsTable.status, "rejected"))
+      .orderBy(desc(ownerLeadsTable.createdAt));
+
+    const venueIds = leads.map((l) => l.venueId).filter(Boolean) as string[];
+    const venues = venueIds.length > 0 
+      ? await db.select().from(venuesTable).where(inArray(venuesTable.id, venueIds))
+      : [];
+    const venueMap = new Map(venues.map((v) => [v.id, v]));
+
+
+    const results: any[] = [];
+    for (const l of leads) {
+      // Skip fully onboarded leads regardless of venue state
+      if (l.status === "onboarded") continue;
+
+      let v: typeof venues[0] | null = null;
+      if (l.venueId) {
+        v = venueMap.get(l.venueId) ?? null;
+        // Skip if linked venue is already live
+        if (v && v.isApproved) continue;
+      }
+
+      let ownerUserId = v?.ownerUserId ?? null;
+      if (!ownerUserId && l.phone) {
+        const [profile] = await db.select().from(profilesTable).where(eq(profilesTable.phone, l.phone));
+        if (profile) ownerUserId = profile.id;
+      }
+
+      const setupChecklist = v ? computeSetupChecklist(v, ownerUserId) : {
+        hasPricing: false, hasHours: false, hasSports: false, hasImages: false,
+        hasOwnerLinked: ownerUserId !== null, isReadyForActivation: false
+      };
+
+      results.push({
+        lead: {
+          id: l.id,
+          venueName: l.venueName,
+          ownerName: l.ownerName,
+          phone: l.phone,
+          city: l.city,
+          sports: l.sports ?? [],
+          message: l.message ?? null,
+          status: l.status,
+          createdAt: l.createdAt.toISOString(),
+        },
+        draftVenue: v ? {
+          id: v.id,
+          name: v.name,
+          pricePerHour: Number(v.pricePerHour),
+          weekdayMorningPrice: v.weekdayMorningPrice,
+          weekdayDayPrice: v.weekdayDayPrice,
+          weekdayEveningPrice: v.weekdayEveningPrice,
+          weekendPrice: v.weekendPrice,
+          slotIntervalMins: v.slotIntervalMins,
+          openTime: v.openTime,
+          closeTime: v.closeTime,
+          sports: v.sports,
+          coverImage: v.coverImage,
+          images: v.images ?? [],
+          isOnboardingDraft: v.isOnboardingDraft,
+        } : null,
+        setupChecklist,
+        ownerUserId,
+      });
+    }
+
+    res.json(results);
+  } catch (err) {
+    req.log.error({ err }, "Error listing onboarding items");
+    res.status(500).json({ error: "internal_error", message: "Failed to list onboarding items" });
+  }
+
+});
+
+router.patch("/admin/onboarding/:leadId", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const leadId = req.params.leadId as string;
+    const body = req.body; 
+
+    const [lead] = await db.select().from(ownerLeadsTable).where(eq(ownerLeadsTable.id, leadId));
+    if (!lead) {
+      res.status(404).json({ error: "not_found", message: "Lead not found" });
+      return;
+    }
+
+    let v: typeof venuesTable.$inferSelect;
+    if (!lead.venueId) {
+      // Atomic: insert draft + link lead in a single transaction to prevent race duplicates
+      v = await db.transaction(async (tx) => {
+        // Re-read lead inside transaction to catch concurrent autosaves
+        const [freshLead] = await tx.select().from(ownerLeadsTable).where(eq(ownerLeadsTable.id, leadId));
+        if (freshLead.venueId) {
+          // Another request beat us — return existing venue
+          const [existing] = await tx.select().from(venuesTable).where(eq(venuesTable.id, freshLead.venueId));
+          return existing;
+        }
+        const [newVenue] = await tx.insert(venuesTable).values({
+          name: body.name ?? lead.venueName,
+          city: lead.city,
+          address: body.address ?? lead.city,
+          sports: body.sports ?? lead.sports ?? [],
+          pricePerHour: body.pricePerHour ? String(body.pricePerHour) : "0",
+          weekdayMorningPrice: body.weekdayMorningPrice ?? 0,
+          weekdayDayPrice: body.weekdayDayPrice ?? 0,
+          weekdayEveningPrice: body.weekdayEveningPrice ?? 0,
+          weekendPrice: body.weekendPrice ?? 0,
+          slotIntervalMins: body.slotIntervalMins ?? 60,
+          openTime: body.openTime ?? "06:00",
+          closeTime: body.closeTime ?? "23:00",
+          coverImage: body.coverImage ?? null,
+          images: body.images ?? [],
+          ownerName: lead.ownerName,
+          contactPhone: lead.phone,
+          isApproved: false,
+          isOnboardingDraft: true,
+        }).returning();
+        await tx.update(ownerLeadsTable).set({ venueId: newVenue.id, updatedAt: new Date() }).where(eq(ownerLeadsTable.id, leadId));
+        return newVenue;
+      });
+    } else {
+      const [existing] = await db.select().from(venuesTable).where(eq(venuesTable.id, lead.venueId));
+      if (!existing) {
+        res.status(404).json({ error: "not_found", message: "Venue draft not found" });
+        return;
+      }
+
+      const updateData: Partial<typeof venuesTable.$inferInsert> = { updatedAt: new Date() };
+      if (body.name !== undefined) updateData.name = body.name;
+      if (body.pricePerHour !== undefined) updateData.pricePerHour = String(body.pricePerHour);
+      if (body.weekdayMorningPrice !== undefined) updateData.weekdayMorningPrice = body.weekdayMorningPrice;
+      if (body.weekdayDayPrice !== undefined) updateData.weekdayDayPrice = body.weekdayDayPrice;
+      if (body.weekdayEveningPrice !== undefined) updateData.weekdayEveningPrice = body.weekdayEveningPrice;
+      if (body.weekendPrice !== undefined) updateData.weekendPrice = body.weekendPrice;
+      if (body.slotIntervalMins !== undefined) updateData.slotIntervalMins = body.slotIntervalMins;
+      if (body.openTime !== undefined) updateData.openTime = body.openTime;
+      if (body.closeTime !== undefined) updateData.closeTime = body.closeTime;
+      if (body.coverImage !== undefined) updateData.coverImage = body.coverImage;
+      if (body.images !== undefined) updateData.images = body.images;
+      if (body.sports !== undefined) updateData.sports = body.sports;
+
+      if (Object.keys(updateData).length > 1) { 
+        const [updated] = await db.update(venuesTable).set(updateData).where(eq(venuesTable.id, lead.venueId)).returning();
+        v = updated;
+      } else {
+        v = existing;
+      }
+    }
+
+    let ownerUserId = v.ownerUserId ?? null;
+    if (!ownerUserId && lead.phone) {
+      const [profile] = await db.select().from(profilesTable).where(eq(profilesTable.phone, lead.phone));
+      if (profile) ownerUserId = profile.id;
+    }
+
+    const setupChecklist = computeSetupChecklist(v, ownerUserId);
+
+    res.json({ success: true, draftVenue: v, setupChecklist });
+  } catch (err) {
+    req.log.error({ err }, "Error updating onboarding draft");
+    res.status(500).json({ error: "internal_error", message: "Failed to update draft" });
+  }
+});
+
+router.post("/admin/onboarding/:leadId/go-live", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const leadId = req.params.leadId as string;
+    const [lead] = await db.select().from(ownerLeadsTable).where(eq(ownerLeadsTable.id, leadId));
+    if (!lead || !lead.venueId) {
+      res.status(400).json({ error: "invalid_state", message: "Lead not found or draft venue not created" });
+      return;
+    }
+
+    const [v] = await db.select().from(venuesTable).where(eq(venuesTable.id, lead.venueId));
+    if (!v) {
+      res.status(404).json({ error: "not_found", message: "Venue draft not found" });
+      return;
+    }
+
+    let ownerUserId = v.ownerUserId ?? null;
+    if (!ownerUserId && lead.phone) {
+      const [profile] = await db.select().from(profilesTable).where(eq(profilesTable.phone, lead.phone));
+      if (profile) ownerUserId = profile.id;
+    }
+
+    const setupChecklist = computeSetupChecklist(v, ownerUserId);
+    if (!setupChecklist.isReadyForActivation) {
+      res.status(400).json({ error: "incomplete", message: "Setup checklist incomplete", setupChecklist });
+      return;
+    }
+
+    await db.transaction(async (tx) => {
+      await tx.update(venuesTable)
+        .set({ isApproved: true, isOnboardingDraft: false, ownerUserId, updatedAt: new Date() })
+        .where(eq(venuesTable.id, v.id));
+
+      await tx.update(ownerLeadsTable)
+        .set({ status: "onboarded", updatedAt: new Date() })
+        .where(eq(ownerLeadsTable.id, lead.id));
+    });
+
+    await backfillVenuePricingDefaults();
+    const slotResult = await regenerateVenueSlotsForNext14Days();
+
+    res.json({
+      venueId: v.id,
+      venueName: v.name,
+      activated: true,
+      slotsGenerated: slotResult.slotsCreated,
+      slotsErrors: slotResult.errors,
+      ownerLinked: ownerUserId !== null,
+      setupChecklist,
+    });
+  } catch (err) {
+    req.log.error({ err }, "Error in go-live");
+    res.status(500).json({ error: "internal_error", message: "Failed to go live" });
   }
 });
 

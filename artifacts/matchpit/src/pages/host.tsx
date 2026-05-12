@@ -9,7 +9,8 @@ import {
   useListVenues,
   useGetVenueSlots,
   useVerifyPayment,
-  useCreateHostedMatch
+  useCreateHostedMatch,
+  useCreatePaymentOrder
 } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -72,16 +73,18 @@ export default function HostMatch() {
 
   // Commerce Math — mirrors backend exactly:
   // backend: reserveFee = Math.ceil(totalVenueCost / totalPlayers / 2)
-  // backend: finalFeePerPlayer = Math.ceil(totalVenueCost / totalPlayers)
-  // backend: hostFee = 99 (fixed platform fee)
-  const hostFee = 99;
-  const venuePrice = selectedSlot?.priceOverride || selectedVenue?.pricePerHour || 0;
+  // backend: finalFeePerPlayer = Math.ceil(totalVenueCost / totalPlayers) - reserveFee
+  // backend: hostFee = 49 (fixed platform fee)
+  const hostFee = 49;
+  const venuePrice = selectedSlot?.computedPrice ?? selectedSlot?.priceOverride ?? selectedVenue?.pricePerHour ?? 0;
   const reserveFeePerPlayer = Math.ceil(venuePrice / watchTotalPlayers / 2);
-  const finalEstPerPlayer = Math.ceil(venuePrice / watchTotalPlayers);
+  const finalEstPerPlayer = Math.ceil(venuePrice / watchTotalPlayers) - reserveFeePerPlayer;
   const totalAmountToPayNow = hostFee + reserveFeePerPlayer;
 
   const verifyPayment = useVerifyPayment();
   const createMatch = useCreateHostedMatch();
+
+  const createPaymentOrder = useCreatePaymentOrder();
 
   const onSubmit = async (values: z.infer<typeof hostSchema>) => {
     if (step < 3) {
@@ -92,26 +95,16 @@ export default function HostMatch() {
     setIsProcessing(true);
     try {
       // ── SAFE ATOMIC FLOW ──────────────────────────────────────────────────
-      // Step 1: Get a Razorpay order from the backend using real slot/venue data.
-      //         No tempRefId — the backend validates slot availability here.
-      const token = await getToken();
-      const orderRes = await fetch("/api/hosted-matches/create-order", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
+      const order = await createPaymentOrder.mutateAsync({
+        data: {
+          type: "host_commitment",
+          referenceId: "host_match_create",
           venueId: values.venueId,
-          slotId: values.slotId,
-          totalPlayers: values.totalPlayers,
-        }),
+          slotIds: [values.slotId],
+          totalPlayers: Number(values.totalPlayers),
+          amount: 0 // Backend will compute and ignore this
+        } as any // as any needed because generated types are lagging behind
       });
-      if (!orderRes.ok) {
-        const err = await orderRes.json();
-        throw new Error(err.message ?? "Failed to create payment order");
-      }
-      const order = await orderRes.json();
 
       // Step 2: Load Razorpay SDK
       const isLoaded = await loadRazorpay();
@@ -428,7 +421,7 @@ export default function HostMatch() {
                       <span className="font-bold">₹{venuePrice}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Est. Cost Per Player</span>
+                      <span className="text-muted-foreground">Final Est. Per Player</span>
                       <span className="font-bold">~₹{finalEstPerPlayer}</span>
                     </div>
                     <div className="flex justify-between text-sm">

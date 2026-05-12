@@ -14,8 +14,10 @@ import {
   hostedMatchesTable,
   hostedMatchParticipantsTable,
   referralConfigTable,
+  reconciliationReportsTable,
+  paymentWebhookEventsTable,
 } from "@workspace/db";
-import { eq, desc, asc, sum, count, and, inArray, ne } from "drizzle-orm";
+import { eq, desc, asc, sum, count, and, inArray, ne, gt, lt, isNull, sql } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 
 const router: IRouter = Router();
@@ -242,6 +244,25 @@ router.patch("/admin/payouts/:payoutId/status", requireAuth, async (req, res) =>
       notes?: string;
     };
 
+    // HM10 PATCH 6: Frozen Settlement Rows
+    // Only pending or hold payouts can be manually mutated.
+    // Once a payout is batched, processing, or paid, its amount/venue/batchId is IMMUTABLE.
+    const [payout] = await db
+      .select({ status: venuePayoutLedgerTable.status })
+      .from(venuePayoutLedgerTable)
+      .where(eq(venuePayoutLedgerTable.id, payoutId))
+      .limit(1);
+
+    if (!payout) {
+      res.status(404).json({ error: "not_found", message: "Payout record not found" });
+      return;
+    }
+
+    if (["paid", "batched", "processing"].includes(payout.status)) {
+      res.status(400).json({ error: "frozen", message: "Cannot modify a payout that is already batched or paid" });
+      return;
+    }
+
     const setFields: Record<string, unknown> = { status };
     if (notes !== undefined) setFields.notes = notes;
     if (status === "paid") setFields.paidAt = new Date();
@@ -269,6 +290,62 @@ router.patch("/admin/payouts/:payoutId/status", requireAuth, async (req, res) =>
   } catch (err) {
     req.log.error({ err }, "Error updating payout status");
     res.status(500).json({ error: "internal_error", message: "Failed to update payout" });
+  }
+});
+
+router.post("/admin/payouts/settle-venue", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { venueId, notes } = req.body as { venueId: string; notes?: string };
+    if (!venueId) {
+      res.status(400).json({ error: "bad_request", message: "venueId is required" });
+      return;
+    }
+
+    const result = await db.transaction(async (tx) => {
+      const pending = await tx
+        .select()
+        .from(venuePayoutLedgerTable)
+        .where(
+          and(
+            eq(venuePayoutLedgerTable.venueId, venueId),
+            eq(venuePayoutLedgerTable.status, "pending")
+          )
+        );
+
+      if (!pending.length) {
+        return { count: 0, total: 0 };
+      }
+
+      const totalAmount = pending.reduce((sum, p) => sum + Number(p.venuePayable), 0);
+
+      // HM10 PATCH 7: Batch Membership Constraint
+      const settlementBatchId = crypto.randomUUID();
+
+      await tx
+        .update(venuePayoutLedgerTable)
+        .set({
+          status: "paid",
+          settlementBatchId,
+          paidAt: new Date(),
+          notes: notes || `Batched settlement ${settlementBatchId.slice(0, 8)}`,
+        })
+        .where(
+          and(
+            eq(venuePayoutLedgerTable.venueId, venueId),
+            eq(venuePayoutLedgerTable.status, "pending")
+          )
+        );
+
+      return { count: pending.length, total: totalAmount, settlementBatchId };
+    });
+
+    res.json({ success: true, settledCount: result.count, totalAmount: result.total, batchId: result.settlementBatchId });
+  } catch (err) {
+    req.log.error({ err }, "Error batch settling venue payouts");
+    res.status(500).json({ error: "internal_error", message: "Failed to settle venue payouts" });
   }
 });
 
@@ -724,6 +801,34 @@ router.post("/admin/cron/drop-unpaid", requireAuth, async (req, res) => {
   }
 });
 
+router.post("/admin/cron/release-expired-reservations", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { releaseExpiredReservations } = await import("../lib/match-cron");
+    const result = await releaseExpiredReservations();
+    res.json({ message: "Release expired reservations cron completed", ...result });
+  } catch (err) {
+    req.log.error({ err }, "Error running release-expired-reservations cron");
+    res.status(500).json({ error: "internal_error", message: "Failed to run release-expired-reservations cron" });
+  }
+});
+
+router.post("/admin/cron/reconcile-match-payments", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const { reconcileHostedMatchPayments } = await import("../lib/match-cron");
+    const result = await reconcileHostedMatchPayments();
+    res.json({ message: "Reconcile match payments cron completed", ...result });
+  } catch (err) {
+    req.log.error({ err }, "Error running reconcile-match-payments cron");
+    res.status(500).json({ error: "internal_error", message: "Failed to run reconcile-match-payments cron" });
+  }
+});
+
 // ─── User Badge Viewer (admin) ────────────────────────────────────────────────
 
 router.get("/admin/users/:userId/badges", requireAuth, async (req, res) => {
@@ -1068,5 +1173,166 @@ router.post("/admin/seed/community", requireAuth, async (req, res) => {
   }
 });
 
+// ─── GET /admin/finance/dashboard ──────────────────────────────────────────────
+// HM11C — Finance Operations Dashboard
+//
+// Returns a comprehensive financial snapshot covering:
+//  - Revenue summary (today's gross, platform revenue, refunds, net)
+//  - Settlement summary (pending, processing, paid this week)
+//  - Risk summary (refund_required, anomalies, stale payments)
+//  - Operational summary (webhook failures, expired reservations, stuck matches)
+// ──────────────────────────────────────────────────────────────────────────────
+router.get("/admin/finance/dashboard", requireAuth, async (req, res) => {
+  try {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+
+    const now = new Date();
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const weekStart = new Date(now);
+    weekStart.setDate(weekStart.getDate() - 7);
+    weekStart.setHours(0, 0, 0, 0);
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+    const [
+      todayPayments,
+      todayRefunds,
+      settlementPending,
+      settlementProcessing,
+      settlementPaidWeek,
+      settlementReversals,
+      refundRequired,
+      reconciliationAnomalies,
+      stalePayments,
+      webhookFailures,
+      expiredReservations,
+      stuckMatches,
+    ] = await Promise.all([
+      // Today's captured payments
+      db.select({
+        gross: sum(paymentsTable.grossAmount),
+        captured: count(),
+      }).from(paymentsTable).where(
+        and(
+          inArray(paymentsTable.status, ["verified", "success", "payment_captured"]),
+          gt(paymentsTable.createdAt, todayStart)
+        )
+      ),
+
+      // Today's refunds
+      db.select({ total: sum(paymentsTable.amount) }).from(paymentsTable).where(
+        and(
+          eq(paymentsTable.type, "refund"),
+          gt(paymentsTable.createdAt, todayStart)
+        )
+      ),
+
+      // Pending/ready settlement count
+      db.select({ count: count(), total: sum(venuePayoutLedgerTable.venuePayable) }).from(venuePayoutLedgerTable).where(
+        inArray(venuePayoutLedgerTable.status, ["pending", "ready_for_settlement"])
+      ),
+
+      // Processing batches
+      db.select({ count: count(), total: sum(venuePayoutLedgerTable.venuePayable) }).from(venuePayoutLedgerTable).where(
+        and(eq(venuePayoutLedgerTable.status, "processing"), lt(venuePayoutLedgerTable.createdAt, twentyFourHoursAgo))
+      ),
+
+      // Paid this week
+      db.select({ total: sum(venuePayoutLedgerTable.venuePayable) }).from(venuePayoutLedgerTable).where(
+        and(eq(venuePayoutLedgerTable.status, "paid"), gt(venuePayoutLedgerTable.paidAt, weekStart))
+      ),
+
+      // Reversals this week
+      db.select({ total: sum(venuePayoutLedgerTable.venuePayable) }).from(venuePayoutLedgerTable).where(
+        and(eq(venuePayoutLedgerTable.payoutType, "reversal"), gt(venuePayoutLedgerTable.createdAt, weekStart))
+      ),
+
+      // Refund required payments
+      db.select({ count: count(), total: sum(paymentsTable.amount) }).from(paymentsTable).where(
+        eq(paymentsTable.reviewStatus, "refund_required")
+      ),
+
+      // Unresolved reconciliation anomalies
+      db.select({ count: count() }).from(reconciliationReportsTable).where(
+        eq(reconciliationReportsTable.resolved, false)
+      ),
+
+      // Stale pending payments >30min
+      db.select({ count: count() }).from(paymentsTable).where(
+        and(
+          inArray(paymentsTable.status, ["pending", "payment_initiated"]),
+          lt(paymentsTable.createdAt, new Date(now.getTime() - 30 * 60 * 1000))
+        )
+      ),
+
+      // Webhook failures in last hour
+      db.select({ count: count() }).from(paymentWebhookEventsTable).where(
+        and(
+          inArray(paymentWebhookEventsTable.processingStatus, ["failed", "refund_required"]),
+          gt(paymentWebhookEventsTable.createdAt, oneHourAgo)
+        )
+      ),
+
+      // Expired reservations today
+      db.select({ count: count() }).from(sql`hosted_match_reservations`).where(
+        sql`reservation_status = 'expired' AND created_at > ${todayStart}`
+      ),
+
+      // Matches stuck in intermediate state >24h
+      db.select({ count: count() }).from(hostedMatchesTable).where(
+        and(
+          inArray(hostedMatchesTable.status, ["confirmed", "fully_paid"]),
+          lt(hostedMatchesTable.updatedAt, twentyFourHoursAgo)
+        )
+      ),
+    ]);
+
+    const grossToday = Number(todayPayments[0]?.gross ?? 0);
+    // Approximate platform revenue: 12% of (gross - 2% gateway fee)
+    const gatewayFeeToday = Math.round(grossToday * 0.02 * 100) / 100;
+    const platformRevenueToday = Math.round((grossToday - gatewayFeeToday) * 0.12 * 100) / 100;
+    const venuePayableToday = grossToday - gatewayFeeToday - platformRevenueToday;
+    const refundsToday = Number(todayRefunds[0]?.total ?? 0);
+    const netRevenueToday = platformRevenueToday - refundsToday;
+
+    res.json({
+      asOf: now.toISOString(),
+      revenueSummary: {
+        grossCollectedToday: grossToday,
+        gatewayFeeToday: gatewayFeeToday,
+        platformRevenueToday: platformRevenueToday,
+        venuePayableToday: venuePayableToday,
+        refundsToday: refundsToday,
+        netRevenueToday: netRevenueToday,
+        transactionCountToday: Number(todayPayments[0]?.captured ?? 0),
+      },
+      settlementSummary: {
+        pendingSettlements: Number(settlementPending[0]?.count ?? 0),
+        pendingPayoutValue: Number(settlementPending[0]?.total ?? 0),
+        processingBatches: Number(settlementProcessing[0]?.count ?? 0),
+        paidThisWeek: Number(settlementPaidWeek[0]?.total ?? 0),
+        reversedAdjustments: Number(settlementReversals[0]?.total ?? 0),
+      },
+      riskSummary: {
+        refundRequiredPayments: Number(refundRequired[0]?.count ?? 0),
+        refundRequiredExposure: Number(refundRequired[0]?.total ?? 0),
+        reconciliationAnomalies: Number(reconciliationAnomalies[0]?.count ?? 0),
+        stalePendingPayments: Number(stalePayments[0]?.count ?? 0),
+      },
+      operationalSummary: {
+        webhookFailuresLastHour: Number(webhookFailures[0]?.count ?? 0),
+        expiredReservationsToday: Number(expiredReservations[0]?.count ?? 0),
+        stuckMatchesCount: Number(stuckMatches[0]?.count ?? 0),
+      },
+    });
+  } catch (err) {
+    req.log.error({ err }, "Error fetching finance dashboard");
+    res.status(500).json({ error: "internal_error", message: "Failed to load finance dashboard" });
+  }
+});
+
 export default router;
+
 

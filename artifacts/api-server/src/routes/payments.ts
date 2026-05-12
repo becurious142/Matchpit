@@ -6,17 +6,16 @@ import {
   hostedMatchParticipantsTable,
   bookingsTable,
   hostedMatchesTable,
+  hostedMatchReservationsTable,
   profilesTable,
   venuesTable,
   slotsTable,
+  walletLedgerTable,
 } from "@workspace/db";
-import { eq, desc, and, inArray } from "drizzle-orm";
+import { eq, desc, and, inArray, sql } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 import { razorpay, verifyRazorpaySignature, getRazorpayKeyId } from "../lib/razorpay";
-import { processReferralRewards, processFirstBookingCashback, processFirstMatchCashback } from "../lib/wallet";
-import { generateBookingPayout, generateMatchPayout } from "../lib/payouts";
-import { createNotification } from "../lib/notifications";
-import { trackEvent, EVENTS } from "../lib/analytics";
+import { runPostPaymentSideEffects, convertReservationToParticipant, MATCH_RESERVATION_TIMEOUT_MINUTES, maybeMarkParticipantPaid } from "../lib/post-payment";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -36,6 +35,26 @@ function computeVenueSlotPrice(
   if (hour < 10) return venue.weekdayMorningPrice;
   if (hour < 17) return venue.weekdayDayPrice;
   return venue.weekdayEveningPrice;
+}
+
+function computeHostedMatchAmounts(
+  match: { totalPlayers: number },
+  venue: typeof venuesTable.$inferSelect,
+  slot: typeof slotsTable.$inferSelect,
+) {
+  const totalVenueCost = computeVenueSlotPrice(venue, slot);
+  const reserveFeePerPlayer = Math.ceil(totalVenueCost / match.totalPlayers / 2);
+  const finalFeePerPlayer = Math.ceil(totalVenueCost / match.totalPlayers) - reserveFeePerPlayer;
+  const hostFee = 49;
+  const hostCommitmentGross = reserveFeePerPlayer + hostFee;
+
+  return {
+    totalVenueCost,
+    reserveFeePerPlayer,
+    finalFeePerPlayer,
+    hostFee,
+    hostCommitmentGross,
+  };
 }
 
 function validateConsecutiveSlots(slots: typeof slotsTable.$inferSelect[]): boolean {
@@ -70,7 +89,8 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
       .limit(1);
     const actualBalance = Number(freshProfile?.walletBalance ?? 0);
 
-    let totalAmount: number;
+    let totalAmount = 0;
+    let computedComponents = { hostFeeComponent: 0, reserveFeeComponent: 0, finalFeeComponent: 0 };
 
     if (type === "booking") {
       // ── Server-side pricing for booking orders ─────────────────────────────
@@ -113,6 +133,53 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
 
       // Server-computed total
       totalAmount = slots.reduce((sum, s) => sum + computeVenueSlotPrice(venue, s), 0);
+    } else if (type === "host_commitment" || type === "match_reserve" || type === "match_final") {
+      let matchContext: { totalPlayers: number } | undefined;
+      let venue: typeof venuesTable.$inferSelect | undefined;
+      let slot: typeof slotsTable.$inferSelect | undefined;
+
+      if (referenceId) {
+        const [matchRow] = await db.select().from(hostedMatchesTable).where(eq(hostedMatchesTable.id, referenceId)).limit(1);
+        if (matchRow) {
+          matchContext = { totalPlayers: matchRow.totalPlayers };
+          [venue] = await db.select().from(venuesTable).where(eq(venuesTable.id, matchRow.venueId)).limit(1);
+          [slot] = await db.select().from(slotsTable).where(eq(slotsTable.id, matchRow.slotId)).limit(1);
+        }
+      }
+      
+      if (!matchContext && type === "host_commitment") {
+        const vId = venueId || req.body.venueId;
+        const sId = (slotIds && slotIds[0]) || req.body.slotId || referenceId;
+        const tPlayers = Number(req.body.totalPlayers) || 10;
+        if (vId && sId) {
+          matchContext = { totalPlayers: tPlayers };
+          [venue] = await db.select().from(venuesTable).where(eq(venuesTable.id, vId)).limit(1);
+          [slot] = await db.select().from(slotsTable).where(eq(slotsTable.id, sId)).limit(1);
+        }
+      }
+
+      if (!matchContext || !venue || !slot) {
+        res.status(404).json({ error: "not_found", message: "Required match/venue/slot context not found" });
+        return;
+      }
+
+      const amounts = computeHostedMatchAmounts(matchContext, venue, slot);
+
+      if (type === "host_commitment") {
+        totalAmount = amounts.hostCommitmentGross;
+        computedComponents = { hostFeeComponent: amounts.hostFee, reserveFeeComponent: amounts.reserveFeePerPlayer, finalFeeComponent: 0 };
+      } else if (type === "match_reserve") {
+        totalAmount = amounts.reserveFeePerPlayer;
+        computedComponents = { hostFeeComponent: 0, reserveFeeComponent: amounts.reserveFeePerPlayer, finalFeeComponent: 0 };
+      } else if (type === "match_final") {
+        totalAmount = amounts.finalFeePerPlayer;
+        computedComponents = { hostFeeComponent: 0, reserveFeeComponent: 0, finalFeeComponent: amounts.finalFeePerPlayer };
+      }
+
+      if (!totalAmount || totalAmount <= 0) {
+        res.status(400).json({ error: "validation", message: "computed amount must be a positive number" });
+        return;
+      }
     } else {
       // ── Non-booking types: use client-supplied amount (existing behavior) ──
       totalAmount = Number(rawAmount);
@@ -138,6 +205,7 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
         walletAmountUsed: serverApprovedWalletUse,
         fullWallet: razorpayAmount === 0,
         computedGrossAmount: totalAmount,
+        ...computedComponents,
       });
       return;
     }
@@ -149,6 +217,13 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
         referenceId: referenceId ?? null,
         razorpayOrderId: `wallet_${Date.now()}`,
         amount: totalAmount.toString(),
+        grossAmount: totalAmount,
+        paymentCategory: type === "host_commitment" || type === "match_reserve" || type === "match_final" ? type : "booking",
+        hostFeeComponent: computedComponents.hostFeeComponent,
+        reserveFeeComponent: computedComponents.reserveFeeComponent,
+        finalFeeComponent: computedComponents.finalFeeComponent,
+        walletComponent: serverApprovedWalletUse,
+        refundComponent: 0,
         status: "pending",
       }).returning();
 
@@ -164,6 +239,7 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
         fullWallet: true,
         paymentId: payment.id,
         computedGrossAmount: totalAmount,
+        ...computedComponents,
       });
       return;
     }
@@ -174,13 +250,77 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
       notes: { type, referenceId, userId: profile.id, walletAmountUsed: serverApprovedWalletUse },
     });
 
-    await db.insert(paymentsTable).values({
-      userId: profile.id,
-      type,
-      referenceId: referenceId ?? null,
-      razorpayOrderId: order.id,
-      amount: totalAmount.toString(),
-      status: "pending",
+    // HM10 PATCH 1 — Strict Capacity Enforcement & Atomic Reservation
+    await db.transaction(async (tx) => {
+      // 1. Lock the match row to prevent concurrent overbooking
+      if ((type === "match_reserve" || type === "match_final" || type === "host_commitment") && referenceId) {
+        const [matchRow] = await tx
+          .select({ totalPlayers: hostedMatchesTable.totalPlayers })
+          .from(hostedMatchesTable)
+          .where(eq(hostedMatchesTable.id, referenceId))
+          .for("update")
+          .limit(1);
+
+        if (!matchRow) throw new Error("Match not found");
+
+        const [participantsCount] = await tx
+          .select({ count: sql<number>`count(*)` })
+          .from(hostedMatchParticipantsTable)
+          .where(
+            and(
+              eq(hostedMatchParticipantsTable.matchId, referenceId),
+              ne(hostedMatchParticipantsTable.status, "dropped_unpaid")
+            )
+          );
+
+        const [reservationsCount] = await tx
+          .select({ count: sql<number>`count(*)` })
+          .from(hostedMatchReservationsTable)
+          .where(
+            and(
+              eq(hostedMatchReservationsTable.matchId, referenceId),
+              eq(hostedMatchReservationsTable.isActive, true)
+            )
+          );
+
+        if (Number(participantsCount.count) + Number(reservationsCount.count) >= matchRow.totalPlayers) {
+          throw new Error("Match is full. Cannot create reservation.");
+        }
+      }
+
+      await tx.insert(paymentsTable).values({
+        userId: profile.id,
+        type,
+        referenceId: referenceId ?? null,
+        razorpayOrderId: order.id,
+        amount: totalAmount.toString(),
+        grossAmount: totalAmount,
+        paymentCategory: type === "host_commitment" || type === "match_reserve" || type === "match_final" ? type : "booking",
+        hostFeeComponent: computedComponents.hostFeeComponent,
+        reserveFeeComponent: computedComponents.reserveFeeComponent,
+        finalFeeComponent: computedComponents.finalFeeComponent,
+        walletComponent: serverApprovedWalletUse,
+        refundComponent: 0,
+        status: "payment_initiated",
+      });
+
+      // For match payment types, create a seat reservation
+      if ((type === "match_reserve" || type === "match_final" || type === "host_commitment") && referenceId) {
+        const expiresAt = new Date(Date.now() + MATCH_RESERVATION_TIMEOUT_MINUTES * 60 * 1000);
+        // HM10 PATCH 2 App-layer guard: unique active reservation is enforced by DB index,
+        // but we also use onConflictDoNothing to silently ignore dupes in high concurrency.
+        await tx
+          .insert(hostedMatchReservationsTable)
+          .values({
+            matchId: referenceId,
+            userId: profile.id,
+            paymentOrderId: order.id,
+            reservationStatus: "pending_payment",
+            isActive: true,
+            expiresAt,
+          })
+          .onConflictDoNothing();
+      }
     });
 
     res.status(201).json({
@@ -194,6 +334,7 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
       walletAmountUsed: serverApprovedWalletUse,
       fullWallet: false,
       computedGrossAmount: totalAmount,
+      ...computedComponents,
     });
   } catch (err) {
     req.log.error({ err }, "Error creating payment order");
@@ -202,6 +343,10 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
 });
 
 // ─── POST /payments/verify ────────────────────────────────────────────────────
+// HM9 FORENSIC PATCH — Verify is now a RECONCILIATION FALLBACK:
+// It is idempotent and safe to call multiple times.
+// If the webhook already processed this payment, verify detects the terminal
+// status and safely returns success without re-triggering side effects.
 router.post("/payments/verify", requireAuth, async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -211,7 +356,7 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
       return;
     }
 
-    const { razorpayOrderId, razorpayPaymentId, razorpaySignature, type, referenceId } = req.body;
+    const { razorpayOrderId, razorpayPaymentId, razorpaySignature, type, referenceId, computedGrossAmount = 0, hostFeeComponent = 0, reserveFeeComponent = 0, finalFeeComponent = 0, walletAmountUsed = 0 } = req.body;
 
     const [existing] = await db
       .select()
@@ -219,9 +364,10 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
       .where(eq(paymentsTable.razorpayOrderId, razorpayOrderId))
       .limit(1);
 
-    if (existing?.status === "success") {
-      await maybeMarkParticipantPaid(type, referenceId, profile.id);
-      res.json({ success: true, paymentId: existing.id, referenceId, type });
+    // HM9: If webhook already finalized this payment, return success without re-running side effects
+    const isAlreadyFinalized = existing && ["verified", "success", "payment_captured"].includes(existing.status);
+    if (isAlreadyFinalized) {
+      res.json({ success: true, paymentId: existing.id, referenceId, type, source: "webhook_already_processed" });
       return;
     }
 
@@ -240,130 +386,88 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
         .returning();
       payment = updated;
     } else {
-      const [inserted] = await db
-        .insert(paymentsTable)
-        .values({
-          userId: profile.id,
-          type,
-          referenceId: referenceId ?? null,
-          razorpayOrderId,
-          razorpayPaymentId,
-          razorpaySignature,
-          amount: "0",
-          status: "success",
-        })
-        .returning();
+      let insertValues: any = {
+        userId: profile.id,
+        type,
+        referenceId: referenceId ?? null,
+        razorpayOrderId,
+        razorpayPaymentId,
+        razorpaySignature,
+        amount: "0",
+        status: "success",
+      };
+
+      if (type === "host_commitment") {
+        insertValues = {
+          ...insertValues,
+          paymentCategory: "host_commitment",
+          grossAmount: computedGrossAmount,
+          hostFeeComponent,
+          reserveFeeComponent,
+          finalFeeComponent: 0,
+          walletComponent: walletAmountUsed,
+          refundComponent: 0,
+          amount: String(computedGrossAmount),
+        };
+      } else if (type === "match_reserve") {
+        insertValues = {
+          ...insertValues,
+          paymentCategory: "match_reserve",
+          grossAmount: computedGrossAmount,
+          hostFeeComponent: 0,
+          reserveFeeComponent: computedGrossAmount,
+          finalFeeComponent: 0,
+          walletComponent: walletAmountUsed,
+          refundComponent: 0,
+          amount: String(computedGrossAmount),
+        };
+      } else if (type === "match_final") {
+        insertValues = {
+          ...insertValues,
+          paymentCategory: "match_final",
+          grossAmount: computedGrossAmount,
+          hostFeeComponent: 0,
+          reserveFeeComponent: 0,
+          finalFeeComponent: computedGrossAmount,
+          walletComponent: walletAmountUsed,
+          refundComponent: 0,
+          amount: String(computedGrossAmount),
+        };
+      }
+
+      const [inserted] = await db.insert(paymentsTable).values(insertValues).returning();
       payment = inserted;
     }
 
-    await maybeMarkParticipantPaid(type, referenceId, profile.id);
+    // HM9: Run all side effects through the shared post-payment module (idempotent)
+    await runPostPaymentSideEffects({
+      paymentId: payment.id,
+      userId: profile.id,
+      type,
+      referenceId,
+      amount: Number(payment.amount),
+      grossAmount: Number(payment.grossAmount || payment.amount),
+    });
 
-    const amount = Number(payment.amount);
-
-    if (type === "booking" && referenceId) {
-      const [booking] = await db
-        .select({ venueId: bookingsTable.venueId })
-        .from(bookingsTable)
-        .where(eq(bookingsTable.id, referenceId))
+    // HM9: If this is a reservation payment, we must convert it here in the fallback
+    if (type === "host_commitment" || type === "match_reserve") {
+      const [reservation] = await db
+        .select({ id: hostedMatchReservationsTable.id })
+        .from(hostedMatchReservationsTable)
+        .where(eq(hostedMatchReservationsTable.paymentOrderId, razorpayOrderId))
         .limit(1);
-      if (booking) {
-        await generateBookingPayout(booking.venueId, referenceId, amount);
+
+      if (reservation) {
+        await convertReservationToParticipant(reservation.id, payment.id);
       }
-      await processFirstBookingCashback(profile.id, referenceId);
-      await processReferralRewards(profile.id);
-      try { await trackEvent(EVENTS.BOOKING_PAID, profile.id, { referenceId, amount }); } catch (e) { logger.warn({ err: e }, "analytics track failed"); }
-      try {
-        await createNotification({
-          userId: profile.id,
-          type: "payment_success",
-          title: "Booking Confirmed!",
-          body: "Your turf booking is confirmed. Check your dashboard for details.",
-          referenceId,
-        });
-      } catch (e) { logger.warn({ err: e }, "notification failed"); }
     }
 
-    if (type === "host_commitment" && referenceId) {
-      const [match] = await db
-        .select({ venueId: hostedMatchesTable.venueId })
-        .from(hostedMatchesTable)
-        .where(eq(hostedMatchesTable.id, referenceId))
-        .limit(1);
-      if (match) {
-        await generateMatchPayout(match.venueId, referenceId, amount);
-      }
-      await processFirstMatchCashback(profile.id, referenceId);
-      await processReferralRewards(profile.id);
-      try { await trackEvent(EVENTS.HOST_MATCH_PAID, profile.id, { referenceId, amount }); } catch (e) { logger.warn({ err: e }, "analytics track failed"); }
-      try {
-        await createNotification({
-          userId: profile.id,
-          type: "payment_success",
-          title: "Match Created!",
-          body: "Your hosted match is live. Share it to fill up your squad!",
-          referenceId,
-        });
-      } catch (e) { logger.warn({ err: e }, "notification failed"); }
-    }
-
-    if (type === "match_reserve" && referenceId) {
-      await processReferralRewards(profile.id);
-      try { await trackEvent(EVENTS.RESERVE_JOIN_PAID, profile.id, { referenceId, amount }); } catch (e) { logger.warn({ err: e }, "analytics track failed"); }
-      try {
-        await createNotification({
-          userId: profile.id,
-          type: "payment_success",
-          title: "Spot Reserved!",
-          body: "You've secured your spot. Final payment due when the match is confirmed.",
-          referenceId,
-        });
-      } catch (e) { logger.warn({ err: e }, "notification failed"); }
-    }
-
-    if (type === "match_final" && referenceId) {
-      const [match] = await db
-        .select({ venueId: hostedMatchesTable.venueId, finalFeePerPlayer: hostedMatchesTable.finalFeePerPlayer })
-        .from(hostedMatchesTable)
-        .where(eq(hostedMatchesTable.id, referenceId))
-        .limit(1);
-      if (match) {
-        await generateMatchPayout(match.venueId, referenceId, Number(match.finalFeePerPlayer));
-      }
-      try { await trackEvent(EVENTS.FINAL_PAYMENT_PAID, profile.id, { referenceId, amount }); } catch (e) { logger.warn({ err: e }, "analytics track failed"); }
-      try {
-        await createNotification({
-          userId: profile.id,
-          type: "payment_success",
-          title: "Final Payment Done!",
-          body: "You're fully paid. See you on the pitch!",
-          referenceId,
-        });
-      } catch (e) { logger.warn({ err: e }, "notification failed"); }
-    }
-
-    res.json({ success: true, paymentId: payment.id, referenceId, type });
+    res.json({ success: true, paymentId: payment.id, referenceId, type, source: "verify_fallback" });
   } catch (err) {
     req.log.error({ err }, "Error verifying payment");
     res.status(500).json({ error: "internal_error", message: "Failed to verify payment" });
   }
 });
-
-async function maybeMarkParticipantPaid(
-  type: string,
-  referenceId: string | null,
-  userId: string,
-): Promise<void> {
-  if (type !== "match_final" || !referenceId) return;
-  await db
-    .update(hostedMatchParticipantsTable)
-    .set({ status: "final_paid", updatedAt: new Date() })
-    .where(
-      and(
-        eq(hostedMatchParticipantsTable.matchId, referenceId),
-        eq(hostedMatchParticipantsTable.userId, userId),
-      ),
-    );
-}
 
 router.get("/payments/history", requireAuth, async (req, res) => {
   try {

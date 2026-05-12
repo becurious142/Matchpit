@@ -4,6 +4,7 @@ import {
   uuid,
   pgEnum,
   text,
+  integer,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -28,6 +29,11 @@ export const hostedMatchParticipantsTable = pgTable("hosted_match_participants",
   status: participantStatusEnum("status").notNull().default("reserved"),
   reservePaymentId: uuid("reserve_payment_id"),
   finalPaymentId: uuid("final_payment_id"),
+  reservePaidAmount: integer("reserve_paid_amount").default(0).notNull(),
+  finalPaidAmount: integer("final_paid_amount").default(0).notNull(),
+  paymentStatus: text("payment_status", {
+    enum: ["none", "reserve_paid", "final_paid", "refunded"]
+  }).default("none").notNull(),
   finalPaymentDeadline: timestamp("final_payment_deadline"),
   droppedAt: timestamp("dropped_at"),
   droppedReason: text("dropped_reason"),

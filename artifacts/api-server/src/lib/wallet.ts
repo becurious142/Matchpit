@@ -287,18 +287,26 @@ export async function processCancellationRefund(
   referenceId: string,
   referenceType: "booking" | "hosted_match",
   amount: number,
+  txDb?: AnyDb,
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    const txDb = tx as unknown as AnyDb;
-    await creditWallet(txDb, userId, amount, `Cancellation refund`, referenceId);
-    await txDb.insert(rewardEventsTable).values({
+  const execute = async (dbInstance: AnyDb) => {
+    await creditWallet(dbInstance, userId, amount, `Cancellation refund`, referenceId);
+    await dbInstance.insert(rewardEventsTable).values({
       userId,
       eventType: "cancellation_refund",
       amount: amount.toString(),
       referenceId,
       referenceType,
     });
-  });
+  };
+
+  if (txDb) {
+    await execute(txDb);
+  } else {
+    await db.transaction(async (tx) => {
+      await execute(tx as unknown as AnyDb);
+    });
+  }
 }
 
 export async function getWalletBalance(userId: string): Promise<number> {
