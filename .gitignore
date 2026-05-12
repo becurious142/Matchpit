@@ -62,7 +62,6 @@ lib/db/check*
 attached_assets/
 
 # Build artifacts and API bundles
-api/
 dist/
 *.mjs.map
 
