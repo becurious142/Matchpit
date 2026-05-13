@@ -124,11 +124,13 @@ export default function Onboarding() {
       // Sanitize: only save canonical sport slugs
       const canonicalSports = sports.filter((s) => CANONICAL_SPORTS.has(s));
       await updateProfile.mutateAsync({
-        favoriteSports: canonicalSports,
-        preferredAreas: areas,
-        primarySkillLevel: skillLevel,
-        onboardingComplete: true,
-      } as any);
+        data: {
+          favoriteSports: canonicalSports,
+          preferredAreas: areas,
+          primarySkillLevel: skillLevel,
+          onboardingComplete: true,
+        },
+      });
       await queryClient.invalidateQueries({ queryKey: ["/api/profile/me"] });
       toast({ title: "Welcome to MATCHPIT! 🎉" });
       setLocation("/dashboard");
