@@ -12,7 +12,7 @@ import {
   slotsTable,
   walletLedgerTable,
 } from "@workspace/db";
-import { eq, desc, and, inArray, sql } from "drizzle-orm";
+import { eq, desc, and, ne, inArray, sql } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 import { razorpay, verifyRazorpaySignature, getRazorpayKeyId } from "../lib/razorpay";
 import { runPostPaymentSideEffects, convertReservationToParticipant, MATCH_RESERVATION_TIMEOUT_MINUTES, maybeMarkParticipantPaid } from "../lib/post-payment";
@@ -81,6 +81,8 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
 
     const { type, referenceId, amount: rawAmount, walletAmountUsed: clientWalletHint = 0, venueId, slotIds } = req.body;
 
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
     // ── Re-read wallet balance — never trust client value ──
     const [freshProfile] = await db
       .select({ walletBalance: profilesTable.walletBalance, walletAutoUse: profilesTable.walletAutoUse })
@@ -91,6 +93,135 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
 
     let totalAmount = 0;
     let computedComponents = { hostFeeComponent: 0, reserveFeeComponent: 0, finalFeeComponent: 0 };
+
+    // ── host_match_create: pre-payment order before match exists ──────────────
+    // The frontend sends this type when the host hasn't created a match yet.
+    // We compute the amount from venueId + slotId + totalPlayers, create a
+    // Razorpay order, and store match metadata in the payment row.
+    // After payment, POST /hosted-matches creates the match atomically.
+    if (type === "host_match_create") {
+      const { slotId, totalPlayers: rawTotalPlayers } = req.body;
+      const tPlayers = Number(rawTotalPlayers) || 10;
+
+      if (!venueId || !slotId) {
+        res.status(400).json({ error: "validation", message: "venueId and slotId are required for host_match_create" });
+        return;
+      }
+
+      const [venue] = await db.select().from(venuesTable).where(eq(venuesTable.id, venueId)).limit(1);
+      if (!venue) {
+        res.status(404).json({ error: "not_found", message: "Venue not found" });
+        return;
+      }
+
+      const [slot] = await db.select().from(slotsTable).where(eq(slotsTable.id, slotId)).limit(1);
+      if (!slot) {
+        res.status(404).json({ error: "not_found", message: "Slot not found" });
+        return;
+      }
+
+      if (slot.status !== "available") {
+        res.status(409).json({ error: "slot_unavailable", message: "This slot is no longer available" });
+        return;
+      }
+
+      const amounts = computeHostedMatchAmounts({ totalPlayers: tPlayers }, venue, slot);
+      totalAmount = amounts.hostCommitmentGross;
+      computedComponents = {
+        hostFeeComponent: amounts.hostFee,
+        reserveFeeComponent: amounts.reserveFeePerPlayer,
+        finalFeeComponent: 0,
+      };
+
+      // Persist metadata for post-payment match creation
+      const matchMetadata = JSON.stringify({
+        venueId,
+        slotId,
+        sport: req.body.sport ?? "",
+        date: slot.date,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        totalPlayers: tPlayers,
+        minPlayers: req.body.minPlayers ?? Math.max(2, Math.ceil(tPlayers * 0.6)),
+        skillLevel: req.body.skillLevel ?? "any",
+        notes: req.body.notes ?? null,
+        totalVenueCost: amounts.totalVenueCost,
+        reserveFeePerPlayer: amounts.reserveFeePerPlayer,
+        finalFeePerPlayer: amounts.finalFeePerPlayer,
+        hostFee: amounts.hostFee,
+      });
+
+      const razorpayAmount = Math.max(0, totalAmount);
+
+      if (!razorpay) {
+        // Dev mode
+        const [devPayment] = await db.insert(paymentsTable).values({
+          userId: profile.id,
+          type: "host_commitment",
+          referenceId: null,
+          razorpayOrderId: `order_dev_host_${Date.now()}`,
+          amount: totalAmount.toString(),
+          grossAmount: totalAmount,
+          paymentCategory: "host_commitment",
+          hostFeeComponent: amounts.hostFee,
+          reserveFeeComponent: amounts.reserveFeePerPlayer,
+          finalFeeComponent: 0,
+          walletComponent: 0,
+          refundComponent: 0,
+          status: "payment_initiated",
+          metadata: matchMetadata,
+        }).returning();
+
+        res.status(201).json({
+          orderId: devPayment.razorpayOrderId,
+          amount: Math.round(razorpayAmount * 100),
+          currency: "INR",
+          razorpayKeyId: "rzp_test_placeholder",
+          prefillName: profile.fullName,
+          prefillEmail: profile.email,
+          prefillContact: profile.phone ?? null,
+          computedGrossAmount: totalAmount,
+          ...computedComponents,
+        });
+        return;
+      }
+
+      const order = await razorpay.orders.create({
+        amount: Math.round(razorpayAmount * 100),
+        currency: "INR",
+        notes: { type: "host_commitment", userId: profile.id },
+      });
+
+      await db.insert(paymentsTable).values({
+        userId: profile.id,
+        type: "host_commitment",
+        referenceId: null,
+        razorpayOrderId: order.id,
+        amount: totalAmount.toString(),
+        grossAmount: totalAmount,
+        paymentCategory: "host_commitment",
+        hostFeeComponent: amounts.hostFee,
+        reserveFeeComponent: amounts.reserveFeePerPlayer,
+        finalFeeComponent: 0,
+        walletComponent: 0,
+        refundComponent: 0,
+        status: "payment_initiated",
+        metadata: matchMetadata,
+      });
+
+      res.status(201).json({
+        orderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        razorpayKeyId: getRazorpayKeyId(),
+        prefillName: profile.fullName,
+        prefillEmail: profile.email,
+        prefillContact: profile.phone ?? null,
+        computedGrossAmount: totalAmount,
+        ...computedComponents,
+      });
+      return;
+    }
 
     if (type === "booking") {
       // ── Server-side pricing for booking orders ─────────────────────────────
@@ -138,7 +269,8 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
       let venue: typeof venuesTable.$inferSelect | undefined;
       let slot: typeof slotsTable.$inferSelect | undefined;
 
-      if (referenceId) {
+      // Only query hosted_matches if referenceId looks like a real UUID
+      if (referenceId && UUID_RE.test(referenceId)) {
         const [matchRow] = await db.select().from(hostedMatchesTable).where(eq(hostedMatchesTable.id, referenceId)).limit(1);
         if (matchRow) {
           matchContext = { totalPlayers: matchRow.totalPlayers };
@@ -253,7 +385,7 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
     // HM10 PATCH 1 — Strict Capacity Enforcement & Atomic Reservation
     await db.transaction(async (tx) => {
       // 1. Lock the match row to prevent concurrent overbooking
-      if ((type === "match_reserve" || type === "match_final" || type === "host_commitment") && referenceId) {
+      if ((type === "match_reserve" || type === "match_final" || type === "host_commitment") && referenceId && UUID_RE.test(referenceId)) {
         const [matchRow] = await tx
           .select({ totalPlayers: hostedMatchesTable.totalPlayers })
           .from(hostedMatchesTable)
@@ -305,7 +437,7 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
       });
 
       // For match payment types, create a seat reservation
-      if ((type === "match_reserve" || type === "match_final" || type === "host_commitment") && referenceId) {
+      if ((type === "match_reserve" || type === "match_final" || type === "host_commitment") && referenceId && UUID_RE.test(referenceId)) {
         const expiresAt = new Date(Date.now() + MATCH_RESERVATION_TIMEOUT_MINUTES * 60 * 1000);
         // HM10 PATCH 2 App-layer guard: unique active reservation is enforced by DB index,
         // but we also use onConflictDoNothing to silently ignore dupes in high concurrency.
