@@ -18,7 +18,6 @@ COPY . .
 
 # Build api-server and dependencies
 RUN pnpm --filter @workspace/api-server build
-RUN pnpm --filter @workspace/db build
 
 # Remove devDependencies to save space
 RUN pnpm --filter @workspace/api-server deploy --prod /prod/api-server
