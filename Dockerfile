@@ -35,4 +35,4 @@ ENV PORT=8080
 USER node
 
 # Start application
-CMD ["node", "dist/index.js"]
+CMD ["node", "--enable-source-maps", "dist/index.mjs"]
