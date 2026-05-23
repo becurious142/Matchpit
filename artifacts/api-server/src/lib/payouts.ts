@@ -2,9 +2,14 @@ import { db } from "@workspace/db";
 import { venuePayoutLedgerTable, platformRevenueLedgerTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { logger } from "./logger";
-
-const PLATFORM_COMMISSION_RATE = 0.12;
-const GATEWAY_FEE_RATE = 0.02;
+import {
+  calculatePayoutBreakdown,
+  calculateGatewayFee,
+  calculatePlatformCommission,
+  PLATFORM_COMMISSION_PERCENT,
+  GATEWAY_FEE_PERCENT,
+} from "./financial-config";
+import { enqueueRiskEvaluation } from "./risk-engine";
 
 export interface PayoutCalculation {
   grossAmount: number;
@@ -14,13 +19,38 @@ export interface PayoutCalculation {
   netRevenue: number;
 }
 
+/**
+ * Calculate payout breakdown for a gross payment amount.
+ *
+ * DOUBLE-ENTRY ACCOUNTING:
+ * 1. Gateway fee deducted FIRST (Razorpay keeps this)
+ * 2. Platform commission calculated on NET (after gateway)
+ * 3. Venue receives remainder
+ * 4. Platform net revenue = commission (gateway already gone)
+ *
+ * CRITICAL BUG FIX (Phase 2A):
+ * Old formula: netRevenue = platformCommission - gatewayFee ❌
+ * New formula: netRevenue = platformCommission ✅
+ *
+ * Why the old formula was wrong:
+ * - Gateway fee already subtracted when calculating venuePayable
+ * - Subtracting it again double-counts the deduction
+ * - This understated platform revenue by 2% of gross in all reports
+ *
+ * Example:
+ * Gross: ₹1,000
+ * Gateway (2%): -₹20 → Razorpay keeps
+ * Net: ₹980
+ * Commission (15% of ₹980): ₹147 → Platform keeps
+ * Venue: ₹980 - ₹147 = ₹833
+ * Platform net revenue: ₹147 (NOT ₹147 - ₹20 = ₹127)
+ *
+ * @param grossAmount - Total payment amount before fees
+ * @returns Payout breakdown
+ */
 export function calculatePayout(grossAmount: number): PayoutCalculation {
-  const gatewayFee = Math.round(grossAmount * GATEWAY_FEE_RATE * 100) / 100;
-  const platformCommission = Math.round((grossAmount - gatewayFee) * PLATFORM_COMMISSION_RATE * 100) / 100;
-  const venuePayable = Math.round((grossAmount - gatewayFee - platformCommission) * 100) / 100;
-  const netRevenue = Math.round((platformCommission - gatewayFee) * 100) / 100;
-
-  return { grossAmount, gatewayFee, platformCommission, venuePayable, netRevenue };
+  // Use centralized calculation from financial-config
+  return calculatePayoutBreakdown(grossAmount);
 }
 
 export async function generateBookingPayout(
@@ -31,7 +61,7 @@ export async function generateBookingPayout(
   const calc = calculatePayout(grossAmount);
 
   try {
-    await db.insert(venuePayoutLedgerTable).values({
+    const payoutId = await db.insert(venuePayoutLedgerTable).values({
       venueId,
       referenceId: bookingId,
       referenceType: "booking",
@@ -39,8 +69,17 @@ export async function generateBookingPayout(
       razorpayFee: calc.gatewayFee.toString(),
       platformCommission: calc.platformCommission.toString(),
       venuePayable: calc.venuePayable.toString(),
-      status: "pending",
-    });
+      status: "risk_hold", // Phase 9: Start with risk_hold instead of pending
+    }).returning({ id: venuePayoutLedgerTable.id });
+
+    // Phase 9: Enqueue risk evaluation
+    if (payoutId.length > 0) {
+      await enqueueRiskEvaluation({
+        type: "payout",
+        payoutId: payoutId[0].id,
+        venueId,
+      });
+    }
 
     await db.insert(platformRevenueLedgerTable).values({
       referenceId: bookingId,
@@ -63,7 +102,7 @@ export async function generateMatchPayout(
   matchId: string,
   grossAmount: number,
   paymentId?: string,
-  payoutType?: "host_commitment" | "match_reserve" | "match_final",
+  payoutType?: "host_commitment" | "match_reserve" | "match_final" | "match_join" | "reversal",
 ): Promise<void> {
   // HM8 FORENSIC PATCH — Idempotency guard: skip if payout row already exists for this paymentId + payoutType
   // Protects against: verify retries, duplicate webhook delivery, manual re-trigger
@@ -87,7 +126,7 @@ export async function generateMatchPayout(
   const calc = calculatePayout(grossAmount);
 
   try {
-    await db.insert(venuePayoutLedgerTable).values({
+    const payoutId = await db.insert(venuePayoutLedgerTable).values({
       venueId,
       referenceId: matchId,
       referenceType: "hosted_match",
@@ -97,8 +136,17 @@ export async function generateMatchPayout(
       venuePayable: calc.venuePayable.toString(),
       paymentId: paymentId ?? null,
       payoutType: payoutType ?? null,
-      status: "pending",
-    });
+      status: "risk_hold", // Phase 9: Start with risk_hold instead of pending
+    }).returning({ id: venuePayoutLedgerTable.id });
+
+    // Phase 9: Enqueue risk evaluation
+    if (payoutId.length > 0) {
+      await enqueueRiskEvaluation({
+        type: "payout",
+        payoutId: payoutId[0].id,
+        venueId,
+      });
+    }
 
     await db.insert(platformRevenueLedgerTable).values({
       referenceId: matchId,

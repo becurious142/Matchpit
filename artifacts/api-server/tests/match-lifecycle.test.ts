@@ -12,7 +12,11 @@
  *  8. Rehost: cancelled match → slot freed → new match creatable
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+vi.hoisted(() => {
+  process.env.ENABLE_ATTENDANCE_VERIFICATION = "false";
+});
 import { eq, and, inArray } from "drizzle-orm";
 
 // Dynamic imports for db-dependent code
@@ -22,7 +26,7 @@ async function loadDb() {
 }
 import {
   processUnderfillCancellations,
-  processCompletedMatches,
+  markMatchesCompleted,
   releaseExpiredReservations,
 } from "../src/lib/match-cron";
 import { generateMatchPayout } from "../src/lib/payouts";
@@ -173,7 +177,7 @@ describe("processUnderfillCancellations", () => {
 });
 
 // ─── 5. Completion Cron ────────────────────────────────────────────────────────
-describe("processCompletedMatches", () => {
+describe("markMatchesCompleted", () => {
   it("transitions fully_paid match to completed if > 3h past end time", async () => {
     const host = await seedUser();
     const venue = await seedVenue();
@@ -194,7 +198,7 @@ describe("processCompletedMatches", () => {
       .set({ startTime: "06:00", endTime: "07:00", status: "fully_paid" })
       .where(eq(schema.hostedMatchesTable.id, match.id));
 
-    const result = await processCompletedMatches();
+    const result = await markMatchesCompleted();
     expect(result.processed).toBeGreaterThanOrEqual(1);
 
     ({ db, schema } = await loadDb());
@@ -219,7 +223,7 @@ describe("processCompletedMatches", () => {
     const payout = await seedPayout(venue.id, { referenceId: match.id, status: "pending" });
 
     const { db, schema } = await loadDb();
-    await processCompletedMatches();
+    await markMatchesCompleted();
 
     const [updatedPayout] = await db
       .select({ status: schema.venuePayoutLedgerTable.status })

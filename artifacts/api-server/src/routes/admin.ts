@@ -8,6 +8,7 @@ import {
   hostedMatchesTable,
   ownerLeadsTable,
   venuePayoutLedgerTable,
+  paymentsTable,
 } from "@workspace/db";
 import { eq, count, sum, desc, inArray, ne } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";

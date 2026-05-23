@@ -282,7 +282,7 @@ router.post("/admin/seed/demo-hosted-matches", requireAdmin, async (req, res) =>
         currentPlayers: current,
         reserveFee: randomInt(50, 200).toString(),
         finalFeePerPlayer: randomInt(150, 600).toString(),
-        totalVenueCost: randomInt(1000, 4000).toString(),
+        totalVenueCost: randomInt(1000, 4000),
         status: status as any,
         notes: `Demo match — ${randomElement(AREAS)} area players welcome!`,
       }).returning() as { id: string }[];

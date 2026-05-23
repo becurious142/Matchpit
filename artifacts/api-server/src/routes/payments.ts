@@ -1,3 +1,4 @@
+import { env } from "../config/env";
 import { Router, type IRouter } from "express";
 import { getAuth } from "@clerk/express";
 import { db } from "@workspace/db";
@@ -15,8 +16,9 @@ import {
 import { eq, desc, and, ne, inArray, sql } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 import { razorpay, verifyRazorpaySignature, getRazorpayKeyId } from "../lib/razorpay";
-import { runPostPaymentSideEffects, convertReservationToParticipant, MATCH_RESERVATION_TIMEOUT_MINUTES, maybeMarkParticipantPaid } from "../lib/post-payment";
+import { runPostPaymentSideEffects, convertReservationToParticipant, MATCH_RESERVATION_TIMEOUT_MINUTES, maybeMarkParticipantPaid, maybeMarkParticipantJoined } from "../lib/post-payment";
 import { logger } from "../lib/logger";
+import { ENABLE_UPFRONT_MODEL, calculateUpfrontJoinFee } from "../lib/financial-config";
 
 const router: IRouter = Router();
 
@@ -264,8 +266,8 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
 
       // Server-computed total
       totalAmount = slots.reduce((sum, s) => sum + computeVenueSlotPrice(venue, s), 0);
-    } else if (type === "host_commitment" || type === "match_reserve" || type === "match_final") {
-      let matchContext: { totalPlayers: number } | undefined;
+    } else if (type === "host_commitment" || type === "match_reserve" || type === "match_final" || type === "match_join") {
+      let matchContext: { totalPlayers: number; reserveFeePerPlayer?: number; finalFeePerPlayer?: number } | undefined;
       let venue: typeof venuesTable.$inferSelect | undefined;
       let slot: typeof slotsTable.$inferSelect | undefined;
 
@@ -273,7 +275,11 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
       if (referenceId && UUID_RE.test(referenceId)) {
         const [matchRow] = await db.select().from(hostedMatchesTable).where(eq(hostedMatchesTable.id, referenceId)).limit(1);
         if (matchRow) {
-          matchContext = { totalPlayers: matchRow.totalPlayers };
+          matchContext = {
+            totalPlayers: matchRow.totalPlayers,
+            reserveFeePerPlayer: Number(matchRow.reserveFee),
+            finalFeePerPlayer: Number(matchRow.finalFeePerPlayer),
+          };
           [venue] = await db.select().from(venuesTable).where(eq(venuesTable.id, matchRow.venueId)).limit(1);
           [slot] = await db.select().from(slotsTable).where(eq(slotsTable.id, matchRow.slotId)).limit(1);
         }
@@ -306,6 +312,13 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
       } else if (type === "match_final") {
         totalAmount = amounts.finalFeePerPlayer;
         computedComponents = { hostFeeComponent: 0, reserveFeeComponent: 0, finalFeeComponent: amounts.finalFeePerPlayer };
+      } else if (type === "match_join") {
+        // Phase 2B: Full upfront join amount = reserveFee + finalFeePerPlayer
+        // Prefer stored match fees if available (more accurate than recomputing)
+        const rFee = matchContext.reserveFeePerPlayer ?? amounts.reserveFeePerPlayer;
+        const fFee = matchContext.finalFeePerPlayer ?? amounts.finalFeePerPlayer;
+        totalAmount = calculateUpfrontJoinFee(rFee, fFee);
+        computedComponents = { hostFeeComponent: 0, reserveFeeComponent: rFee, finalFeeComponent: fFee };
       }
 
       if (!totalAmount || totalAmount <= 0) {
@@ -384,8 +397,8 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
 
     // HM10 PATCH 1 — Strict Capacity Enforcement & Atomic Reservation
     await db.transaction(async (tx) => {
-      // 1. Lock the match row to prevent concurrent overbooking
-      if ((type === "match_reserve" || type === "match_final" || type === "host_commitment") && referenceId && UUID_RE.test(referenceId)) {
+      // Lock the match row to prevent concurrent overbooking
+      if ((type === "match_reserve" || type === "match_final" || type === "host_commitment" || type === "match_join") && referenceId && UUID_RE.test(referenceId)) {
         const [matchRow] = await tx
           .select({ totalPlayers: hostedMatchesTable.totalPlayers })
           .from(hostedMatchesTable)
@@ -405,15 +418,20 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
             )
           );
 
-        const [reservationsCount] = await tx
-          .select({ count: sql<number>`count(*)` })
-          .from(hostedMatchReservationsTable)
-          .where(
-            and(
-              eq(hostedMatchReservationsTable.matchId, referenceId),
-              eq(hostedMatchReservationsTable.isActive, true)
-            )
-          );
+        // For match_join (upfront) we only count existing participants — no active reservations
+        let reservationsCount = { count: 0 };
+        if (type !== "match_join") {
+          const [rc] = await tx
+            .select({ count: sql<number>`count(*)` })
+            .from(hostedMatchReservationsTable)
+            .where(
+              and(
+                eq(hostedMatchReservationsTable.matchId, referenceId),
+                eq(hostedMatchReservationsTable.isActive, true)
+              )
+            );
+          reservationsCount = rc ?? { count: 0 };
+        }
 
         if (Number(participantsCount.count) + Number(reservationsCount.count) >= matchRow.totalPlayers) {
           throw new Error("Match is full. Cannot create reservation.");
@@ -427,7 +445,7 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
         razorpayOrderId: order.id,
         amount: totalAmount.toString(),
         grossAmount: totalAmount,
-        paymentCategory: type === "host_commitment" || type === "match_reserve" || type === "match_final" ? type : "booking",
+        paymentCategory: type === "host_commitment" || type === "match_reserve" || type === "match_final" || type === "match_join" ? type : "booking",
         hostFeeComponent: computedComponents.hostFeeComponent,
         reserveFeeComponent: computedComponents.reserveFeeComponent,
         finalFeeComponent: computedComponents.finalFeeComponent,
@@ -436,7 +454,8 @@ router.post("/payments/create-order", requireAuth, async (req, res) => {
         status: "payment_initiated",
       });
 
-      // For match payment types, create a seat reservation
+      // For legacy match payment types, create a seat reservation
+      // Phase 2B: match_join skips the reservation entirely — participant is created post-payment
       if ((type === "match_reserve" || type === "match_final" || type === "host_commitment") && referenceId && UUID_RE.test(referenceId)) {
         const expiresAt = new Date(Date.now() + MATCH_RESERVATION_TIMEOUT_MINUTES * 60 * 1000);
         // HM10 PATCH 2 App-layer guard: unique active reservation is enforced by DB index,
@@ -504,7 +523,7 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
     }
 
     const isValid = verifyRazorpaySignature(razorpayOrderId, razorpayPaymentId, razorpaySignature);
-    if (!isValid && process.env.RAZORPAY_KEY_SECRET) {
+    if (!isValid && env.RAZORPAY_KEY_SECRET) {
       res.status(400).json({ error: "invalid_signature", message: "Payment verification failed" });
       return;
     }
@@ -582,6 +601,7 @@ router.post("/payments/verify", requireAuth, async (req, res) => {
     });
 
     // HM9: If this is a reservation payment, we must convert it here in the fallback
+    // Phase 2B: match_join bypasses reservation; participant is created via side effects
     if (type === "host_commitment" || type === "match_reserve") {
       const [reservation] = await db
         .select({ id: hostedMatchReservationsTable.id })
@@ -694,7 +714,7 @@ router.post("/payments/retry-verify", requireAuth, async (req, res) => {
 
     if (razorpayPaymentId && razorpaySignature) {
       const isValid = verifyRazorpaySignature(razorpayOrderId, razorpayPaymentId, razorpaySignature);
-      if (!isValid && process.env.RAZORPAY_KEY_SECRET) {
+      if (!isValid && env.RAZORPAY_KEY_SECRET) {
         res.status(400).json({ error: "invalid_signature", message: "Payment verification failed" });
         return;
       }

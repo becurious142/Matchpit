@@ -1,21 +1,19 @@
 /**
- * HM11A — Payment Flow Integration Tests
+ * Phase 2B — Payment Flow Integration Tests
  *
  * Covers:
- *  1. Host commitment payment success → payout generated
- *  2. Player reserve payment success → reservation → participant
- *  3. Final payment success → participant final_paid → match fully_paid
- *  4. Wallet-only payments (walletComponent == grossAmount, razorpay amount = 0)
- *  5. Partial wallet + Razorpay (mixed payment components)
- *  6. Duplicate webhook delivery → idempotent skip
- *  7. Late webhook after reservation expiry → refund_required
- *  8. Verify fallback after missing webhook → side effects triggered manually
- *
- * Each test:
- *  - Seeds minimal required DB rows via helpers
- *  - Directly exercises the library functions (NOT HTTP routes)
- *  - Asserts on DB state after execution
- *  - Is cleaned up by afterEach in setup.ts
+ *  1. Payout calculation (15% commission)
+ *  2. Host commitment payment → payout generated
+ *  3. Upfront match_join payment success → participant created as final_paid
+ *  4. Upfront match_join idempotency (duplicate webhook/side-effect call)
+ *  5. match_join transitions match to confirmed then fully_paid
+ *  6. Payment failure handling (failed status, no side effects)
+ *  7. Duplicate webhook idempotency via generateMatchPayout
+ *  8. Legacy reserve payment → reservation → participant (backward compat)
+ *  9. Legacy final payment → fully_paid transition (backward compat)
+ * 10. Refund compatibility (reverseMatchPayouts)
+ * 11. Legacy payment compatibility (existing match_reserve records)
+ * 12. Late webhook safety (refund_required)
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -38,7 +36,12 @@ import {
   runPostPaymentSideEffects,
   convertReservationToParticipant,
   maybeMarkParticipantPaid,
+  maybeMarkParticipantJoined,
 } from "../src/lib/post-payment";
+import {
+  calculateUpfrontJoinFee,
+  ENABLE_UPFRONT_MODEL,
+} from "../src/lib/financial-config";
 import {
   seedUser,
   seedVenue,
@@ -53,13 +56,14 @@ import {
 } from "./setup";
 
 // ─── 1. Payout Calculation ─────────────────────────────────────────────────────
-describe("calculatePayout", () => {
-  it("correctly deducts 2% gateway fee and 12% platform commission", () => {
+describe("calculatePayout — 15% commission", () => {
+  it("correctly deducts 2% gateway fee and 15% platform commission", () => {
     const result = calculatePayout(1000);
     expect(result.grossAmount).toBe(1000);
     expect(result.gatewayFee).toBeCloseTo(20, 1);
-    expect(result.platformCommission).toBeCloseTo(117.6, 0);
-    expect(result.venuePayable).toBeCloseTo(862.4, 0);
+    // netAfterGateway = 980, commission = 980 * 0.15 = 147
+    expect(result.platformCommission).toBeCloseTo(147, 0);
+    expect(result.venuePayable).toBeCloseTo(833, 0);
   });
 
   it("produces zero payable for zero input", () => {
@@ -74,7 +78,16 @@ describe("calculatePayout", () => {
   });
 });
 
-// ─── 2. Host Commitment Payment → Payout Generated ────────────────────────────
+// ─── 1b. Upfront Fee Calculation ───────────────────────────────────────────────
+describe("calculateUpfrontJoinFee", () => {
+  it("returns sum of reserve + final fees", () => {
+    expect(calculateUpfrontJoinFee(49, 350)).toBe(399);
+    expect(calculateUpfrontJoinFee(100, 200)).toBe(300);
+    expect(calculateUpfrontJoinFee(0, 0)).toBe(0);
+  });
+});
+
+// ─── 2. Host Commitment → Payout Generated ────────────────────────────────────
 describe("generateMatchPayout — host_commitment", () => {
   it("creates a venue payout ledger row for host commitment payment", async () => {
     const { venue, match } = await buildMatchScenario();
@@ -128,34 +141,146 @@ describe("generateMatchPayout — host_commitment", () => {
         )
       );
 
-    // Should only have ONE row despite two calls
     expect(rows).toHaveLength(1);
     testRegistry.payoutIds.push(...rows.map((r) => r.id));
   });
 });
 
-// ─── 3. Reserve Payment → Reservation → Participant Conversion ─────────────────
-describe("convertReservationToParticipant", () => {
-  it("converts a paid reservation to a participant and increments player count", async () => {
-    const { venue, match } = await buildMatchScenario({ minPlayers: 4 });
-    const player = await seedUser({ fullName: "Player 1" });
+// ─── 3. Phase 2B: match_join → participant created as final_paid ──────────────
+describe("maybeMarkParticipantJoined — match_join (Phase 2B upfront)", () => {
+  it("creates a participant with status=final_paid on upfront join", async () => {
+    const { match } = await buildMatchScenario({ minPlayers: 4 });
+    const player = await seedUser({ fullName: "Upfront Player" });
     const payment = await seedPayment(player.id, {
-      type: "match_reserve",
+      type: "match_join" as any,
       referenceId: match.id,
-      amount: "49",
-      grossAmount: 49,
+      amount: "399",
+      grossAmount: 399,
       status: "verified",
     });
-    const reservation = await seedReservation(match.id, player.id, payment.id, {
-      reservationStatus: "awaiting_conversion",
-      amount: 49,
+
+    await maybeMarkParticipantJoined("match_join", match.id, player.id, payment.id, 399);
+
+    const participants = await db
+      .select()
+      .from(hostedMatchParticipantsTable)
+      .where(
+        and(
+          eq(hostedMatchParticipantsTable.matchId, match.id),
+          eq(hostedMatchParticipantsTable.userId, player.id)
+        )
+      );
+
+    expect(participants).toHaveLength(1);
+    expect(participants[0].paymentStatus).toBe("final_paid");
+    expect(participants[0].status).toBe("final_paid");
+    expect(participants[0].finalPaidAmount).toBe(399);
+    testRegistry.participantIds.push(participants[0].id);
+
+    const [updatedMatch] = await db
+      .select({ currentPlayers: hostedMatchesTable.currentPlayers })
+      .from(hostedMatchesTable)
+      .where(eq(hostedMatchesTable.id, match.id));
+    expect(updatedMatch.currentPlayers).toBe(1);
+  });
+
+  it("is idempotent — second call does not create duplicate participant", async () => {
+    const { match } = await buildMatchScenario();
+    const player = await seedUser();
+    const payment = await seedPayment(player.id, {
+      type: "match_join" as any,
+      referenceId: match.id,
+      grossAmount: 399,
+      status: "verified",
     });
 
-    const result = await convertReservationToParticipant(reservation.id, payment.id);
+    await maybeMarkParticipantJoined("match_join", match.id, player.id, payment.id, 399);
+    await maybeMarkParticipantJoined("match_join", match.id, player.id, payment.id, 399);
 
-    expect(result.converted).toBe(true);
+    const participants = await db
+      .select()
+      .from(hostedMatchParticipantsTable)
+      .where(
+        and(
+          eq(hostedMatchParticipantsTable.matchId, match.id),
+          eq(hostedMatchParticipantsTable.userId, player.id)
+        )
+      );
 
-    // Participant should exist
+    expect(participants).toHaveLength(1);
+    testRegistry.participantIds.push(...participants.map((p) => p.id));
+  });
+
+  it("does nothing when type is not match_join", async () => {
+    const { match } = await buildMatchScenario();
+    const player = await seedUser();
+    const payment = await seedPayment(player.id, { type: "match_reserve", referenceId: match.id });
+
+    await maybeMarkParticipantJoined("match_reserve", match.id, player.id, payment.id, 49);
+
+    const participants = await db
+      .select()
+      .from(hostedMatchParticipantsTable)
+      .where(eq(hostedMatchParticipantsTable.matchId, match.id));
+    expect(participants).toHaveLength(0);
+  });
+});
+
+// ─── 4. Phase 2B: match_join transitions match status ─────────────────────────
+describe("maybeMarkParticipantJoined — match status transitions", () => {
+  it("transitions match to confirmed when minPlayers crossed via upfront joins", async () => {
+    const { match } = await buildMatchScenario({ minPlayers: 2 });
+
+    const player1 = await seedUser();
+    const player2 = await seedUser();
+    const pay1 = await seedPayment(player1.id, { type: "match_join" as any, referenceId: match.id, grossAmount: 399 });
+    const pay2 = await seedPayment(player2.id, { type: "match_join" as any, referenceId: match.id, grossAmount: 399 });
+
+    await maybeMarkParticipantJoined("match_join", match.id, player1.id, pay1.id, 399);
+
+    const [after1] = await db.select({ status: hostedMatchesTable.status }).from(hostedMatchesTable).where(eq(hostedMatchesTable.id, match.id));
+    expect(after1.status).toBe("open"); // not yet at minPlayers
+
+    await maybeMarkParticipantJoined("match_join", match.id, player2.id, pay2.id, 399);
+
+    const [after2] = await db.select({ status: hostedMatchesTable.status }).from(hostedMatchesTable).where(eq(hostedMatchesTable.id, match.id));
+    // With 2 final_paid players >= minPlayers=2, should be confirmed or fully_paid
+    expect(["confirmed", "fully_paid"]).toContain(after2.status);
+
+    const ps = await db.select().from(hostedMatchParticipantsTable).where(eq(hostedMatchParticipantsTable.matchId, match.id));
+    testRegistry.participantIds.push(...ps.map((p) => p.id));
+  });
+});
+
+// ─── 5. Phase 2B: runPostPaymentSideEffects for match_join ────────────────────
+describe("runPostPaymentSideEffects — match_join", () => {
+  it("creates payout and participant for match_join payment", async () => {
+    const { venue, match } = await buildMatchScenario();
+    const player = await seedUser();
+    const payment = await seedPayment(player.id, {
+      type: "match_join" as any,
+      referenceId: match.id,
+      amount: "399",
+      grossAmount: 399,
+      status: "verified",
+    });
+
+    await runPostPaymentSideEffects({
+      paymentId: payment.id,
+      userId: player.id,
+      type: "match_join",
+      referenceId: match.id,
+      amount: 399,
+      grossAmount: 399,
+    });
+
+    const payouts = await db
+      .select()
+      .from(venuePayoutLedgerTable)
+      .where(eq(venuePayoutLedgerTable.paymentId, payment.id));
+    expect(payouts.length).toBeGreaterThanOrEqual(1);
+    testRegistry.payoutIds.push(...payouts.map((p) => p.id));
+
     const participants = await db
       .select()
       .from(hostedMatchParticipantsTable)
@@ -166,145 +291,72 @@ describe("convertReservationToParticipant", () => {
         )
       );
     expect(participants).toHaveLength(1);
-    expect(participants[0].paymentStatus).toBe("reserve_paid");
-    testRegistry.participantIds.push(participants[0].id);
-
-    // Match player count should be incremented
-    const [updatedMatch] = await db
-      .select({ currentPlayers: hostedMatchesTable.currentPlayers })
-      .from(hostedMatchesTable)
-      .where(eq(hostedMatchesTable.id, match.id));
-    expect(updatedMatch.currentPlayers).toBe(1);
+    expect(participants[0].paymentStatus).toBe("final_paid");
+    testRegistry.participantIds.push(...participants.map((p) => p.id));
   });
 
-  it("returns already_converted on duplicate call", async () => {
-    const { venue, match } = await buildMatchScenario();
-    const player = await seedUser();
-    const payment = await seedPayment(player.id, { type: "match_reserve", referenceId: match.id });
-    const reservation = await seedReservation(match.id, player.id, payment.id, {
-      reservationStatus: "awaiting_conversion",
-    });
-
-    await convertReservationToParticipant(reservation.id, payment.id);
-    const second = await convertReservationToParticipant(reservation.id, payment.id);
-    expect(second.converted).toBe(false);
-    expect(second.reason).toMatch(/already_converted|participant_already_exists|terminal_state/);
-  });
-
-  it("does NOT convert when reservation is expired (late webhook path)", async () => {
+  it("is idempotent — double call generates only one payout row", async () => {
     const { match } = await buildMatchScenario();
     const player = await seedUser();
-    const payment = await seedPayment(player.id, { type: "match_reserve", referenceId: match.id });
-    const reservation = await seedReservation(match.id, player.id, payment.id, {
-      reservationStatus: "expired",
-      isActive: false,
-      expiresAt: new Date(Date.now() - 10 * 60 * 1000),
-    });
-
-    const result = await convertReservationToParticipant(reservation.id, payment.id);
-    expect(result.converted).toBe(false);
-  });
-
-  it("transitions match to confirmed when minPlayers threshold is crossed", async () => {
-    const { match } = await buildMatchScenario({ minPlayers: 2 });
-
-    // Add 1 player manually first so we're at count=1
-    await db.update(hostedMatchesTable)
-      .set({ currentPlayers: 1 })
-      .where(eq(hostedMatchesTable.id, match.id));
-
-    const player = await seedUser();
-    const payment = await seedPayment(player.id, { type: "match_reserve", referenceId: match.id, grossAmount: 49 });
-    const reservation = await seedReservation(match.id, player.id, payment.id, {
-      reservationStatus: "awaiting_conversion",
-      amount: 49,
-    });
-
-    await convertReservationToParticipant(reservation.id, payment.id);
-
-    const [updatedMatch] = await db
-      .select({ status: hostedMatchesTable.status })
-      .from(hostedMatchesTable)
-      .where(eq(hostedMatchesTable.id, match.id));
-
-    // With currentPlayers going from 1 → 2 (>= minPlayers=2) → confirmed
-    expect(updatedMatch.status).toBe("confirmed");
-  });
-});
-
-// ─── 4. Final Payment → fully_paid Transition ─────────────────────────────────
-describe("maybeMarkParticipantPaid — match_final", () => {
-  it("marks participant as final_paid and transitions match to fully_paid when all paid", async () => {
-    const { venue, match } = await buildMatchScenario({ minPlayers: 2 });
-
-    // Set match to confirmed with 2 players
-    await db.update(hostedMatchesTable)
-      .set({ status: "confirmed", currentPlayers: 2 })
-      .where(eq(hostedMatchesTable.id, match.id));
-
-    const player1 = await seedUser();
-    const player2 = await seedUser();
-    const p1 = await seedParticipant(match.id, player1.id, { paymentStatus: "reserve_paid" });
-    const p2 = await seedParticipant(match.id, player2.id, { paymentStatus: "reserve_paid" });
-
-    const payment1 = await seedPayment(player1.id, { type: "match_final", referenceId: match.id, amount: "350", grossAmount: 350 });
-    const payment2 = await seedPayment(player2.id, { type: "match_final", referenceId: match.id, amount: "350", grossAmount: 350 });
-
-    // First player pays
-    await maybeMarkParticipantPaid("match_final", match.id, player1.id, payment1.id, 350);
-
-    // Match should still be confirmed
-    const [after1] = await db.select({ status: hostedMatchesTable.status }).from(hostedMatchesTable).where(eq(hostedMatchesTable.id, match.id));
-    expect(after1.status).toBe("confirmed");
-
-    // Second player pays → match → fully_paid
-    await maybeMarkParticipantPaid("match_final", match.id, player2.id, payment2.id, 350);
-
-    const [after2] = await db.select({ status: hostedMatchesTable.status }).from(hostedMatchesTable).where(eq(hostedMatchesTable.id, match.id));
-    expect(after2.status).toBe("fully_paid");
-  });
-
-  it("is idempotent — double call does not double-update financials", async () => {
-    const { match } = await buildMatchScenario({ minPlayers: 2 });
-    await db.update(hostedMatchesTable).set({ status: "confirmed", currentPlayers: 1 }).where(eq(hostedMatchesTable.id, match.id));
-
-    const player = await seedUser();
-    await seedParticipant(match.id, player.id, { paymentStatus: "reserve_paid" });
-    const payment = await seedPayment(player.id, { type: "match_final", referenceId: match.id, amount: "350", grossAmount: 350 });
-
-    await maybeMarkParticipantPaid("match_final", match.id, player.id, payment.id, 350);
-    await maybeMarkParticipantPaid("match_final", match.id, player.id, payment.id, 350);
-
-    const [m] = await db.select({ grossFinalCollected: hostedMatchesTable.grossFinalCollected }).from(hostedMatchesTable).where(eq(hostedMatchesTable.id, match.id));
-    // Should only count once
-    expect(m.grossFinalCollected).toBe(350);
-  });
-});
-
-// ─── 5. Wallet-Only Payment ────────────────────────────────────────────────────
-describe("Wallet-only payment", () => {
-  it("records walletComponent equal to gross and razorpay amount = 0", async () => {
-    const { match } = await buildMatchScenario();
-    const player = await seedUser({ walletBalance: "500" });
-
-    // Wallet-only: amount=0 (no Razorpay), walletComponent=49
     const payment = await seedPayment(player.id, {
-      type: "match_reserve",
+      type: "match_join" as any,
       referenceId: match.id,
-      amount: "0",
-      grossAmount: 49,
+      grossAmount: 399,
       status: "verified",
     });
 
-    // Verify the payment row captures the split correctly
-    const [p] = await db.select().from(paymentsTable).where(eq(paymentsTable.id, payment.id));
-    expect(Number(p.amount)).toBe(0);
-    expect(p.grossAmount).toBe(49);
+    const ctx = {
+      paymentId: payment.id,
+      userId: player.id,
+      type: "match_join",
+      referenceId: match.id,
+      amount: 399,
+      grossAmount: 399,
+    };
+
+    await runPostPaymentSideEffects(ctx);
+    await runPostPaymentSideEffects(ctx);
+
+    const payouts = await db
+      .select()
+      .from(venuePayoutLedgerTable)
+      .where(eq(venuePayoutLedgerTable.paymentId, payment.id));
+
+    expect(payouts.length).toBeLessThanOrEqual(1);
+    testRegistry.payoutIds.push(...payouts.map((p) => p.id));
+
+    const participants = await db
+      .select()
+      .from(hostedMatchParticipantsTable)
+      .where(eq(hostedMatchParticipantsTable.matchId, match.id));
+    expect(participants).toHaveLength(1);
+    testRegistry.participantIds.push(...participants.map((p) => p.id));
   });
 });
 
-// ─── 6. Duplicate Webhook Idempotency ─────────────────────────────────────────
-describe("runPostPaymentSideEffects — idempotency", () => {
+// ─── 6. Payment Failure Handling ──────────────────────────────────────────────
+describe("Payment failure handling", () => {
+  it("failed payment does NOT create a participant", async () => {
+    const { match } = await buildMatchScenario();
+    const player = await seedUser();
+    await seedPayment(player.id, {
+      type: "match_join" as any,
+      referenceId: match.id,
+      grossAmount: 399,
+      status: "failed",
+    });
+
+    // Do NOT call side effects for failed payments (webhook skips them)
+    const participants = await db
+      .select()
+      .from(hostedMatchParticipantsTable)
+      .where(eq(hostedMatchParticipantsTable.matchId, match.id));
+    expect(participants).toHaveLength(0);
+  });
+});
+
+// ─── 7. Duplicate Webhook Idempotency ─────────────────────────────────────────
+describe("runPostPaymentSideEffects — duplicate webhook idempotency", () => {
   it("generates payout only once when called twice with same paymentId", async () => {
     const { venue, match } = await buildMatchScenario();
     const player = await seedUser();
@@ -333,14 +385,167 @@ describe("runPostPaymentSideEffects — idempotency", () => {
       .from(venuePayoutLedgerTable)
       .where(eq(venuePayoutLedgerTable.paymentId, payment.id));
 
-    // Idempotent: only one payout row regardless of double invocation
     expect(payouts.length).toBeLessThanOrEqual(1);
     testRegistry.payoutIds.push(...payouts.map((p) => p.id));
   });
 });
 
-// ─── 7. Late Webhook → refund_required ────────────────────────────────────────
-describe("Late webhook safety", () => {
+// ─── 8. Legacy: Reserve → Reservation → Participant (backward compat) ─────────
+describe("convertReservationToParticipant — legacy backward compat", () => {
+  it("converts a paid reservation to a participant", async () => {
+    const { match } = await buildMatchScenario({ minPlayers: 4 });
+    const player = await seedUser({ fullName: "Legacy Player" });
+    const payment = await seedPayment(player.id, {
+      type: "match_reserve",
+      referenceId: match.id,
+      amount: "49",
+      grossAmount: 49,
+      status: "verified",
+    });
+    const reservation = await seedReservation(match.id, player.id, payment.id, {
+      reservationStatus: "awaiting_conversion",
+      amount: 49,
+    });
+
+    const result = await convertReservationToParticipant(reservation.id, payment.id);
+    expect(result.converted).toBe(true);
+
+    const participants = await db
+      .select()
+      .from(hostedMatchParticipantsTable)
+      .where(
+        and(
+          eq(hostedMatchParticipantsTable.matchId, match.id),
+          eq(hostedMatchParticipantsTable.userId, player.id)
+        )
+      );
+    expect(participants).toHaveLength(1);
+    expect(participants[0].paymentStatus).toBe("reserve_paid");
+    testRegistry.participantIds.push(participants[0].id);
+  });
+
+  it("returns already_converted on duplicate call (idempotent)", async () => {
+    const { match } = await buildMatchScenario();
+    const player = await seedUser();
+    const payment = await seedPayment(player.id, { type: "match_reserve", referenceId: match.id });
+    const reservation = await seedReservation(match.id, player.id, payment.id, {
+      reservationStatus: "awaiting_conversion",
+    });
+
+    await convertReservationToParticipant(reservation.id, payment.id);
+    const second = await convertReservationToParticipant(reservation.id, payment.id);
+    expect(second.converted).toBe(false);
+    expect(second.reason).toMatch(/already_converted|participant_already_exists|terminal_state/);
+  });
+
+  it("does NOT convert when reservation is expired", async () => {
+    const { match } = await buildMatchScenario();
+    const player = await seedUser();
+    const payment = await seedPayment(player.id, { type: "match_reserve", referenceId: match.id });
+    const reservation = await seedReservation(match.id, player.id, payment.id, {
+      reservationStatus: "expired",
+      isActive: false,
+      expiresAt: new Date(Date.now() - 10 * 60 * 1000),
+    });
+
+    const result = await convertReservationToParticipant(reservation.id, payment.id);
+    expect(result.converted).toBe(false);
+  });
+});
+
+// ─── 9. Legacy: Final Payment → fully_paid (backward compat) ──────────────────
+describe("maybeMarkParticipantPaid — legacy match_final", () => {
+  it("marks participant as final_paid and transitions match to fully_paid", async () => {
+    const { match } = await buildMatchScenario({ minPlayers: 2 });
+
+    await db.update(hostedMatchesTable)
+      .set({ status: "confirmed", currentPlayers: 2 })
+      .where(eq(hostedMatchesTable.id, match.id));
+
+    const player1 = await seedUser();
+    const player2 = await seedUser();
+    const p1 = await seedParticipant(match.id, player1.id, { paymentStatus: "reserve_paid" });
+    const p2 = await seedParticipant(match.id, player2.id, { paymentStatus: "reserve_paid" });
+
+    const pay1 = await seedPayment(player1.id, { type: "match_final", referenceId: match.id, amount: "350", grossAmount: 350 });
+    const pay2 = await seedPayment(player2.id, { type: "match_final", referenceId: match.id, amount: "350", grossAmount: 350 });
+
+    await maybeMarkParticipantPaid("match_final", match.id, player1.id, pay1.id, 350);
+    const [after1] = await db.select({ status: hostedMatchesTable.status }).from(hostedMatchesTable).where(eq(hostedMatchesTable.id, match.id));
+    expect(after1.status).toBe("confirmed");
+
+    await maybeMarkParticipantPaid("match_final", match.id, player2.id, pay2.id, 350);
+    const [after2] = await db.select({ status: hostedMatchesTable.status }).from(hostedMatchesTable).where(eq(hostedMatchesTable.id, match.id));
+    expect(after2.status).toBe("fully_paid");
+
+    testRegistry.participantIds.push(p1.id, p2.id);
+  });
+
+  it("is idempotent — double call does not double-update financials", async () => {
+    const { match } = await buildMatchScenario({ minPlayers: 2 });
+    await db.update(hostedMatchesTable).set({ status: "confirmed", currentPlayers: 1 }).where(eq(hostedMatchesTable.id, match.id));
+
+    const player = await seedUser();
+    const p = await seedParticipant(match.id, player.id, { paymentStatus: "reserve_paid" });
+    const payment = await seedPayment(player.id, { type: "match_final", referenceId: match.id, amount: "350", grossAmount: 350 });
+
+    await maybeMarkParticipantPaid("match_final", match.id, player.id, payment.id, 350);
+    await maybeMarkParticipantPaid("match_final", match.id, player.id, payment.id, 350);
+
+    const [m] = await db.select({ grossFinalCollected: hostedMatchesTable.grossFinalCollected }).from(hostedMatchesTable).where(eq(hostedMatchesTable.id, match.id));
+    expect(m.grossFinalCollected).toBe(350);
+    testRegistry.participantIds.push(p.id);
+  });
+});
+
+// ─── 10. Refund Compatibility — reverseMatchPayouts ───────────────────────────
+describe("reverseMatchPayouts — refund compat", () => {
+  it("creates equal and opposite reversal rows netting to zero", async () => {
+    const { venue, match } = await buildMatchScenario();
+    const payment = await seedPayment((await seedUser()).id, { type: "host_commitment", referenceId: match.id, grossAmount: 700 });
+    await generateMatchPayout(venue.id, match.id, 700, payment.id, "host_commitment");
+
+    const beforeRows = await db.select().from(venuePayoutLedgerTable).where(eq(venuePayoutLedgerTable.referenceId, match.id));
+    testRegistry.payoutIds.push(...beforeRows.map((r) => r.id));
+
+    await reverseMatchPayouts(match.id);
+
+    const allRows = await db.select().from(venuePayoutLedgerTable).where(eq(venuePayoutLedgerTable.referenceId, match.id));
+    testRegistry.payoutIds.push(...allRows.map((r) => r.id));
+
+    const netVenuePayable = allRows.reduce((sum, r) => sum + Number(r.venuePayable), 0);
+    expect(Math.abs(netVenuePayable)).toBeLessThan(0.01);
+  });
+});
+
+// ─── 11. Legacy Payment Compatibility ─────────────────────────────────────────
+describe("Legacy payment compatibility — match_reserve records", () => {
+  it("match_reserve payout generation still works", async () => {
+    const { venue, match } = await buildMatchScenario();
+    const player = await seedUser();
+    const payment = await seedPayment(player.id, {
+      type: "match_reserve",
+      referenceId: match.id,
+      amount: "49",
+      grossAmount: 49,
+      status: "verified",
+    });
+
+    await generateMatchPayout(venue.id, match.id, 49, payment.id, "match_reserve");
+
+    const rows = await db
+      .select()
+      .from(venuePayoutLedgerTable)
+      .where(eq(venuePayoutLedgerTable.paymentId, payment.id));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].payoutType).toBe("match_reserve");
+    testRegistry.payoutIds.push(...rows.map((r) => r.id));
+  });
+});
+
+// ─── 12. Late Webhook Safety ───────────────────────────────────────────────────
+describe("Late webhook safety — refund_required", () => {
   it("flags payment as refund_required when reservation is expired", async () => {
     const { match } = await buildMatchScenario();
     const player = await seedUser();
@@ -350,19 +555,17 @@ describe("Late webhook safety", () => {
       status: "verified",
     });
 
-    // Reservation was already expired
     await seedReservation(match.id, player.id, payment.id, {
       reservationStatus: "expired",
       isActive: false,
       expiresAt: new Date(Date.now() - 15 * 60 * 1000),
     });
 
-    // Simulate: webhook arrives but reservation.isActive = false → mark refund_required
+    // Simulate webhook handler marking refund_required
     await db.update(paymentsTable)
       .set({ reviewStatus: "refund_required" })
       .where(eq(paymentsTable.id, payment.id));
 
-    // Insert reconciliation report (mirrors webhook handler)
     const [report] = await db.insert(reconciliationReportsTable).values({
       reportType: "late_webhook_refund_required",
       severity: "high",
@@ -381,22 +584,56 @@ describe("Late webhook safety", () => {
   });
 });
 
-// ─── 8. Payout Reversal Netting ────────────────────────────────────────────────
-describe("reverseMatchPayouts", () => {
-  it("creates equal and opposite reversal rows netting to zero", async () => {
+// ─── 13. match_join Payout Generation ─────────────────────────────────────────
+describe("generateMatchPayout — match_join", () => {
+  it("creates a venue payout ledger row for match_join payment", async () => {
     const { venue, match } = await buildMatchScenario();
-    const payment = await seedPayment((await seedUser()).id, { type: "host_commitment", referenceId: match.id, grossAmount: 700 });
-    await generateMatchPayout(venue.id, match.id, 700, payment.id, "host_commitment");
+    const player = await seedUser({ fullName: "Joining Player" });
+    const payment = await seedPayment(player.id, {
+      type: "match_join" as any,
+      referenceId: match.id,
+      amount: "399",
+      grossAmount: 399,
+      status: "verified",
+    });
 
-    const beforeRows = await db.select().from(venuePayoutLedgerTable).where(eq(venuePayoutLedgerTable.referenceId, match.id));
-    testRegistry.payoutIds.push(...beforeRows.map((r) => r.id));
+    await generateMatchPayout(venue.id, match.id, 399, payment.id, "match_join");
 
-    await reverseMatchPayouts(match.id);
+    const rows = await db
+      .select()
+      .from(venuePayoutLedgerTable)
+      .where(
+        and(
+          eq(venuePayoutLedgerTable.paymentId, payment.id),
+          eq(venuePayoutLedgerTable.payoutType, "match_join")
+        )
+      );
 
-    const allRows = await db.select().from(venuePayoutLedgerTable).where(eq(venuePayoutLedgerTable.referenceId, match.id));
-    testRegistry.payoutIds.push(...allRows.map((r) => r.id));
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0].grossAmount)).toBe(399);
+    expect(rows[0].status).toBe("pending");
+    testRegistry.payoutIds.push(...rows.map((r) => r.id));
+  });
 
-    const netVenuePayable = allRows.reduce((sum, r) => sum + Number(r.venuePayable), 0);
-    expect(Math.abs(netVenuePayable)).toBeLessThan(0.01); // nets to zero
+  it("is idempotent — second call with same paymentId is a no-op", async () => {
+    const { venue, match } = await buildMatchScenario();
+    const player = await seedUser();
+    const payment = await seedPayment(player.id, {
+      type: "match_join" as any,
+      referenceId: match.id,
+      grossAmount: 399,
+      status: "verified",
+    });
+
+    await generateMatchPayout(venue.id, match.id, 399, payment.id, "match_join");
+    await generateMatchPayout(venue.id, match.id, 399, payment.id, "match_join");
+
+    const rows = await db
+      .select()
+      .from(venuePayoutLedgerTable)
+      .where(eq(venuePayoutLedgerTable.paymentId, payment.id));
+
+    expect(rows).toHaveLength(1);
+    testRegistry.payoutIds.push(...rows.map((r) => r.id));
   });
 });

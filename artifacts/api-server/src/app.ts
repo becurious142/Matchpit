@@ -1,3 +1,4 @@
+import { env } from "./config/env";
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
@@ -10,24 +11,20 @@ import {
 } from "./middlewares/clerkProxyMiddleware";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import crypto from "crypto";
+import { securityHeaders, trustedProxyMiddleware, requireCsrfHeader, sessionIpDriftDetection } from "./middlewares/security";
 
 const app: Express = express();
 
-// ─── CORS ─────────────────────────────────────────────────────────────────────
-// In production, restrict to explicit allowed origins via CORS_ORIGINS env var.
-// CORS_ORIGINS is a comma-separated list, e.g.:
-//   CORS_ORIGINS=https://matchpit.in,https://www.matchpit.in,https://matchpit.vercel.app
-// In development, allow all origins for convenience.
 function buildCorsOrigin(): cors.CorsOptions["origin"] {
-  const raw = process.env.CORS_ORIGINS ?? process.env.FRONTEND_URL ?? "";
-  if (!raw || process.env.NODE_ENV !== "production") {
-    return true; // allow all in dev
+  const raw = env.CORS_ORIGINS ?? env.FRONTEND_URL ?? "";
+  if (!raw || env.NODE_ENV !== "production") {
+    return true;
   }
   const allowed = new Set(
-    raw.split(",").map((o) => o.trim()).filter(Boolean)
+    raw.split(",").map((o: string) => o.trim()).filter(Boolean)
   );
   return (origin, callback) => {
-    // Allow requests with no origin (server-to-server, curl, Razorpay webhooks)
     if (!origin) return callback(null, true);
     if (allowed.has(origin)) return callback(null, true);
     logger.warn({ origin }, "CORS blocked request from disallowed origin");
@@ -38,6 +35,13 @@ function buildCorsOrigin(): cors.CorsOptions["origin"] {
 app.use(
   pinoHttp({
     logger,
+    genReqId: function (req, res) {
+      const existingId = req.id ?? req.headers["x-request-id"];
+      if (existingId) return existingId;
+      const id = crypto.randomUUID();
+      res.setHeader("x-request-id", id);
+      return id;
+    },
     serializers: {
       req(req) {
         return {
@@ -52,36 +56,39 @@ app.use(
         };
       },
     },
-  }),
+  })
 );
+
+app.set("trust proxy", 1); // Trust proxy (Cloudflare/Vercel)
+app.use(trustedProxyMiddleware);
+app.use(securityHeaders);
 
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 
 app.use(cors({ credentials: true, origin: buildCorsOrigin() }));
 
-// ─── RAW BODY for Razorpay webhook HMAC verification ─────────────────────────
-// Must be registered BEFORE express.json() so the raw buffer is available
-// on req.body for the /api/payments/webhook route.
 app.use("/api/payments/webhook", express.raw({ type: "application/json" }));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Debug environment variables
-console.log("Environment variables check:", {
-  CLERK_PUBLISHABLE_KEY: process.env.CLERK_PUBLISHABLE_KEY ? "✓ Present" : "✗ Missing",
-  CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY ? "✓ Present" : "✗ Missing", 
-  CLERK_JWT_KEY: process.env.CLERK_JWT_KEY ? "✓ Present" : "✗ Missing",
-});
-
 app.use(
   clerkMiddleware({
-    publishableKey: process.env.CLERK_PUBLISHABLE_KEY,
-    secretKey: process.env.CLERK_SECRET_KEY,
-    // Add JWT token support for Vercel serverless deployment
-    jwtKey: process.env.CLERK_JWT_KEY,
-  }),
+    publishableKey: env.CLERK_PUBLISHABLE_KEY,
+    secretKey: env.CLERK_SECRET_KEY,
+    jwtKey: env.CLERK_JWT_KEY,
+  })
 );
+
+app.use(sessionIpDriftDetection);
+
+// Apply CSRF to non-GET/OPTIONS mutations, excluding webhooks
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api/payments/webhook") || req.method === "GET" || req.method === "OPTIONS") {
+    return next();
+  }
+  requireCsrfHeader(req, res, next);
+});
 
 app.use("/api", router);
 

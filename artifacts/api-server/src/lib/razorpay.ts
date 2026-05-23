@@ -1,8 +1,9 @@
+import { env } from "../config/env";
 import Razorpay from "razorpay";
 import crypto from "crypto";
 
-const keyId = process.env.RAZORPAY_KEY_ID ?? "";
-const keySecret = process.env.RAZORPAY_KEY_SECRET ?? "";
+const keyId = env.RAZORPAY_KEY_ID ?? "";
+const keySecret = env.RAZORPAY_KEY_SECRET ?? "";
 
 export const razorpay = keyId && keySecret
   ? new Razorpay({ key_id: keyId, key_secret: keySecret })

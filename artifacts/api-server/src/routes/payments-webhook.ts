@@ -1,3 +1,4 @@
+import { env } from "../config/env";
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import {
@@ -30,7 +31,7 @@ const router: IRouter = Router();
 // ─────────────────────────────────────────────────────────────────────────────
 router.post("/payments/webhook", async (req, res) => {
   try {
-    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    const webhookSecret = env.RAZORPAY_WEBHOOK_SECRET;
     if (!webhookSecret) {
       logger.warn("Webhook received but RAZORPAY_WEBHOOK_SECRET is not configured");
       res.status(500).json({ error: "missing_secret" });
@@ -83,6 +84,7 @@ router.post("/payments/webhook", async (req, res) => {
       grossAmount: number;
       reservationId?: string;
     } | null = null;
+    let currentEventId: string | null = null;
 
     await db.transaction(async (tx) => {
       // ── Step 1: Idempotency — persist event, detect duplicate ──────────────
@@ -98,6 +100,7 @@ router.post("/payments/webhook", async (req, res) => {
           logger.info({ providerEventId }, "Webhook already processed — idempotent skip");
           return; // exits transaction only
         }
+        currentEventId = existingEvent.id;
         // Retry — increment counter
         await tx
           .update(paymentWebhookEventsTable)
@@ -105,13 +108,14 @@ router.post("/payments/webhook", async (req, res) => {
           .where(eq(paymentWebhookEventsTable.id, existingEvent.id));
       } else {
         // Persist raw event BEFORE processing
-        await tx.insert(paymentWebhookEventsTable).values({
+        const [insertedEvent] = await tx.insert(paymentWebhookEventsTable).values({
           providerEventId,
           provider: "razorpay",
           eventType,
           payload,
           processingStatus: "pending",
-        });
+        }).returning({ id: paymentWebhookEventsTable.id });
+        currentEventId = insertedEvent.id;
       }
 
       if (!rzpOrderId) throw new Error("Could not extract orderId from payload");
@@ -238,7 +242,7 @@ router.post("/payments/webhook", async (req, res) => {
     // Reservation → Participant conversion and payout generation happen here
     // to avoid holding the DB transaction open during slow operations.
     if (shouldRunSideEffects && sideEffectCtx) {
-      const ctx = sideEffectCtx;
+      const ctx: any = sideEffectCtx;
       if (ctx.reservationId) {
         try {
           const result = await convertReservationToParticipant(
@@ -251,10 +255,32 @@ router.post("/payments/webhook", async (req, res) => {
         }
       }
 
-      try {
-        await runPostPaymentSideEffects(ctx);
-      } catch (err) {
-        logger.error({ err, paymentId: ctx.paymentId }, "HM9: post-payment side effects failed");
+      if (currentEventId) {
+        try {
+          const { webhookSideEffectsQueue } = await import("../queues/queues");
+          const { writeJobStart, writeEnqueueFailed } = await import("../queues/job-executions");
+          
+          const executionId = await writeJobStart(
+            "webhook-side-effects",
+            "webhook-process",
+            null,
+            currentEventId,
+            { eventId: currentEventId }
+          );
+          
+          try {
+            const queue = webhookSideEffectsQueue();
+            const job = await queue.add("webhook-process", { eventId: currentEventId, executionId, ctx });
+            const { jobExecutionsTable } = await import("@workspace/db");
+            await db.update(jobExecutionsTable).set({ bullmqJobId: job.id }).where(eq(jobExecutionsTable.id, executionId));
+            logger.info({ eventId: currentEventId, jobId: job.id }, "Enqueued webhook side effects");
+          } catch (err) {
+            await writeEnqueueFailed(executionId, err);
+            logger.error({ err, eventId: currentEventId }, "Failed to enqueue webhook side effects");
+          }
+        } catch (err) {
+          logger.error({ err, eventId: currentEventId }, "Failed to write audit or load queue for webhook side effects");
+        }
       }
     }
 

@@ -1,3 +1,4 @@
+import { env } from "../config/env";
 import { Router, type IRouter } from "express";
 import { getAuth } from "@clerk/express";
 import { db } from "@workspace/db";
@@ -73,7 +74,7 @@ async function extractEmailAndName(
   // Fallback: fetch from Clerk Backend API (needed when email is not in JWT claims)
   try {
     const { createClerkClient } = await import("@clerk/backend");
-    const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+    const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
     const clerkUserData = await clerkClient.users.getUser(userId);
     const email = clerkUserData.emailAddresses?.[0]?.emailAddress ?? "";
     const fullName =

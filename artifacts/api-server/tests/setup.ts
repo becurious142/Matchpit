@@ -28,6 +28,9 @@ import {
   venuePayoutLedgerTable,
   walletLedgerTable,
   reconciliationReportsTable,
+  matchAttendanceConfirmationsTable,
+  rewardEventsTable,   // Phase 5
+  referralsTable,      // Phase 5
 } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 
@@ -41,36 +44,60 @@ export const testRegistry = {
   paymentIds: [] as string[],
   reservationIds: [] as string[],
   participantIds: [] as string[],
+  attendanceIds: [] as string[],  // Phase 3
   payoutIds: [] as string[],
   webhookEventIds: [] as string[],
   ledgerEntryIds: [] as string[],
   reconciliationIds: [] as string[],
+  rewardEventIds: [] as string[],  // Phase 5
+  referralIds: [] as string[],     // Phase 5
 };
 
 // ─── Cleanup ──────────────────────────────────────────────────────────────────
 export async function cleanupTestData() {
   const r = testRegistry;
 
-  if (r.reconciliationIds.length)
-    await db.delete(reconciliationReportsTable).where(inArray(reconciliationReportsTable.id, r.reconciliationIds));
-  if (r.webhookEventIds.length)
-    await db.delete(paymentWebhookEventsTable).where(inArray(paymentWebhookEventsTable.id, r.webhookEventIds));
-  if (r.payoutIds.length)
-    await db.delete(venuePayoutLedgerTable).where(inArray(venuePayoutLedgerTable.id, r.payoutIds));
-  if (r.participantIds.length)
-    await db.delete(hostedMatchParticipantsTable).where(inArray(hostedMatchParticipantsTable.id, r.participantIds));
-  if (r.reservationIds.length)
-    await db.delete(hostedMatchReservationsTable).where(inArray(hostedMatchReservationsTable.id, r.reservationIds));
-  if (r.paymentIds.length)
-    await db.delete(paymentsTable).where(inArray(paymentsTable.id, r.paymentIds));
-  if (r.matchIds.length)
-    await db.delete(hostedMatchesTable).where(inArray(hostedMatchesTable.id, r.matchIds));
-  if (r.slotIds.length)
-    await db.delete(slotsTable).where(inArray(slotsTable.id, r.slotIds));
-  if (r.venueIds.length)
-    await db.delete(venuesTable).where(inArray(venuesTable.id, r.venueIds));
-  if (r.profileIds.length)
-    await db.delete(profilesTable).where(inArray(profilesTable.id, r.profileIds));
+  try {
+    // Cleanup in reverse dependency order
+    if (r.reconciliationIds.length)
+      await db.delete(reconciliationReportsTable).where(inArray(reconciliationReportsTable.id, r.reconciliationIds));
+    if (r.webhookEventIds.length)
+      await db.delete(paymentWebhookEventsTable).where(inArray(paymentWebhookEventsTable.id, r.webhookEventIds));
+    if (r.payoutIds.length)
+      await db.delete(venuePayoutLedgerTable).where(inArray(venuePayoutLedgerTable.id, r.payoutIds));
+    if (r.attendanceIds.length)  // Phase 3 — before participants
+      await db.delete(matchAttendanceConfirmationsTable).where(inArray(matchAttendanceConfirmationsTable.id, r.attendanceIds));
+    if (r.participantIds.length)
+      await db.delete(hostedMatchParticipantsTable).where(inArray(hostedMatchParticipantsTable.id, r.participantIds));
+    if (r.reservationIds.length)
+      await db.delete(hostedMatchReservationsTable).where(inArray(hostedMatchReservationsTable.id, r.reservationIds));
+    if (r.paymentIds.length)
+      await db.delete(paymentsTable).where(inArray(paymentsTable.id, r.paymentIds));
+    if (r.matchIds.length)
+      await db.delete(hostedMatchesTable).where(inArray(hostedMatchesTable.id, r.matchIds));
+    if (r.slotIds.length)
+      await db.delete(slotsTable).where(inArray(slotsTable.id, r.slotIds));
+    if (r.ledgerEntryIds.length)
+      await db.delete(walletLedgerTable).where(inArray(walletLedgerTable.id, r.ledgerEntryIds));
+    // Phase 5 cleanup
+    if (r.rewardEventIds.length)
+      await db.delete(rewardEventsTable).where(inArray(rewardEventsTable.id, r.rewardEventIds));
+    if (r.referralIds.length)
+      await db.delete(referralsTable).where(inArray(referralsTable.id, r.referralIds));
+    if (r.venueIds.length)
+      await db.delete(venuesTable).where(inArray(venuesTable.id, r.venueIds));
+    if (r.profileIds.length)
+      await db.delete(profilesTable).where(inArray(profilesTable.id, r.profileIds));
+  } catch (err) {
+    // If cleanup fails due to foreign key constraints, try again after deleting matches
+    // This handles cases where matches were created but not tracked in registry
+    if (r.slotIds.length) {
+      // Delete any matches using our test slots (orphaned records)
+      await db.delete(hostedMatchesTable).where(inArray(hostedMatchesTable.slotId, r.slotIds));
+      // Try deleting slots again
+      await db.delete(slotsTable).where(inArray(slotsTable.id, r.slotIds));
+    }
+  }
 
   // Reset registry
   Object.keys(r).forEach((k) => ((r as any)[k] = []));
@@ -127,6 +154,8 @@ export async function seedSlot(venueId: string, overrides: Partial<{
   date: string;
   startTime: string;
   endTime: string;
+  status: "available" | "held" | "booked" | "unavailable";
+  isBlockedByOwner: boolean;
 }> = {}) {
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
@@ -137,9 +166,10 @@ export async function seedSlot(venueId: string, overrides: Partial<{
     date: overrides.date ?? dateStr,
     startTime: overrides.startTime ?? "18:00",
     endTime: overrides.endTime ?? "19:00",
-    status: "available",
+    status: overrides.status ?? "available",
     sport: "football",
     priceOverride: "700",
+    isBlockedByOwner: overrides.isBlockedByOwner ?? false,
   }).returning();
   testRegistry.slotIds.push(slot.id);
   return slot;
@@ -183,7 +213,7 @@ export async function seedMatch(hostUserId: string, venueId: string, slotId: str
 }
 
 export async function seedPayment(userId: string, overrides: Partial<{
-  type: "booking" | "host_commitment" | "match_reserve" | "match_final" | "refund" | "cashback";
+  type: "booking" | "host_commitment" | "match_reserve" | "match_final" | "match_join" | "refund" | "cashback";
   referenceId: string;
   razorpayOrderId: string;
   razorpayPaymentId: string;

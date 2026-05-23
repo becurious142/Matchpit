@@ -30,6 +30,8 @@ export const reconciliationReportTypeEnum = pgEnum("reconciliation_report_type",
   "settlement_batch_failure",          // Batch settlement error
   "late_webhook_refund_required",      // Late webhook flagged for manual refund
   "stale_pending_payment",             // Payment pending > threshold minutes
+  "ledger_wallet_imbalance",           // Wallet total mismatch vs Ledger
+  "ledger_razorpay_imbalance",         // Razorpay payments mismatch vs Ledger
 ]);
 
 export const reconciliationReportsTable = pgTable("reconciliation_reports", {

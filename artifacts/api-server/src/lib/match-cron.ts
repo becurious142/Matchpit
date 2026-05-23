@@ -8,11 +8,22 @@ import {
   slotsTable,
   venuePayoutLedgerTable,
   reconciliationReportsTable,
+  cronExecutionsTable,
 } from "@workspace/db";
-import { eq, and, lt, gt, inArray, isNull, ne } from "drizzle-orm";
-import { processUnderfillRefund } from "./wallet";
+import { eq, and, lt, gt, inArray, isNull, ne, sql } from "drizzle-orm";
+import { processUnderfillRefund } from "./refund-routing";
 import { reverseMatchPayouts } from "./payouts";
 import { logger } from "./logger";
+import { sendSlackAlert } from "./slack";
+import {
+  ENABLE_ATTENDANCE_VERIFICATION,
+  ATTENDANCE_GRACE_PERIOD_HOURS,
+} from "./financial-config";
+import {
+  releaseVerifiedPayouts as _releaseVerifiedPayouts,
+  expireUnverifiedMatches as _expireUnverifiedMatches,
+} from "./attendance-verification";
+
 
 export interface CronResult {
   processed: number;
@@ -20,7 +31,52 @@ export interface CronResult {
   details: string[];
 }
 
-export async function processUnderfillCancellations(): Promise<CronResult> {
+export function withCronObservability<T extends (...args: any[]) => Promise<CronResult>>(jobName: string, fn: T): T {
+  return (async (...args: any[]) => {
+    const jobKey = `${jobName}_${Date.now()}`;
+    const [exec] = await db.insert(cronExecutionsTable).values({
+      jobName,
+      jobKey,
+      status: "running"
+    }).returning();
+    
+    const start = Date.now();
+    try {
+      const result = await fn(...args);
+      const durationMs = Date.now() - start;
+      const isSuccess = result.errors === 0;
+      
+      await db.update(cronExecutionsTable).set({
+        status: isSuccess ? "success" : "failed",
+        completedAt: new Date(),
+        durationMs,
+        metadata: { processed: result.processed, errors: result.errors, details: result.details }
+      }).where(eq(cronExecutionsTable.id, exec.id));
+      
+      return result;
+    } catch (err: any) {
+      const durationMs = Date.now() - start;
+      await db.update(cronExecutionsTable).set({
+        status: "failed",
+        completedAt: new Date(),
+        durationMs,
+        errorMessage: err.message || String(err)
+      }).where(eq(cronExecutionsTable.id, exec.id));
+      throw err;
+    }
+  }) as unknown as T;
+}
+
+export const releaseVerifiedPayouts = withCronObservability("releaseVerifiedPayouts", async (): Promise<CronResult> => {
+  const res = await _releaseVerifiedPayouts();
+  return { processed: res.released, errors: res.errors, details: res.details };
+});
+export const expireUnverifiedMatches = withCronObservability("expireUnverifiedMatches", async (): Promise<CronResult> => {
+  const res = await _expireUnverifiedMatches();
+  return { processed: res.disputed, errors: res.errors, details: res.details };
+});
+
+export const processUnderfillCancellations = withCronObservability("processUnderfillCancellations", async function(): Promise<CronResult> {
   const result: CronResult = { processed: 0, errors: 0, details: [] };
   const now = new Date();
   const todayStr = now.toISOString().slice(0, 10);
@@ -100,14 +156,15 @@ export async function processUnderfillCancellations(): Promise<CronResult> {
       result.errors++;
       result.details.push(`Match ${match.id} failed: ${String(err)}`);
       logger.error({ err, matchId: match.id }, "Underfill cancellation error");
+      await sendSlackAlert("Cron Error: processUnderfillCancellations", String(err), "error", { matchId: match.id });
     }
   }
 
   logger.info(result, "processUnderfillCancellations complete");
   return result;
-}
+});
 
-export async function dropUnpaidParticipants(): Promise<CronResult> {
+export const dropUnpaidParticipants = withCronObservability("dropUnpaidParticipants", async function(): Promise<CronResult> {
   const result: CronResult = { processed: 0, errors: 0, details: [] };
   const now = new Date();
 
@@ -157,15 +214,19 @@ export async function dropUnpaidParticipants(): Promise<CronResult> {
       result.errors++;
       result.details.push(`Participant ${participant.id} drop failed: ${String(err)}`);
       logger.error({ err, participantId: participant.id }, "Drop unpaid participant error");
+      await sendSlackAlert("Cron Error: dropUnpaidParticipants", String(err), "error", { participantId: participant.id });
     }
   }
 
   logger.info(result, "dropUnpaidParticipants complete");
   return result;
-}
+});
 
 // HM8 FORENSIC PATCH — completion cron: transition confirmed/fully_paid matches to completed
-export async function processCompletedMatches(): Promise<CronResult> {
+// Phase 3 UPDATE: when ENABLE_ATTENDANCE_VERIFICATION is true, transitions to
+// pending_verification instead of directly completing; payouts are held pending quorum.
+
+export const markMatchesCompleted = withCronObservability("markMatchesCompleted", async function(): Promise<CronResult> {
   const result: CronResult = { processed: 0, errors: 0, details: [] };
   const now = new Date();
   
@@ -180,13 +241,9 @@ export async function processCompletedMatches(): Promise<CronResult> {
 
   for (const match of candidateMatches) {
     try {
-      // Basic check: combine date + endTime (in UTC) and add 3 hours
-      // match.date is YYYY-MM-DD, match.endTime is HH:MM in local venue timezone
-      // Note: All match dates/times should be stored and compared in UTC or consistent timezone
-      const matchEndStr = `${match.date}T${match.endTime}:00Z`; // Force UTC interpretation
+      const matchEndStr = `${match.date}T${match.endTime}:00Z`;
       const matchEndDate = new Date(matchEndStr);
       
-      // If parsing fails, skip
       if (isNaN(matchEndDate.getTime())) {
         continue;
       }
@@ -194,45 +251,70 @@ export async function processCompletedMatches(): Promise<CronResult> {
       const completedThreshold = new Date(matchEndDate.getTime() + 3 * 60 * 60 * 1000);
 
       if (now > completedThreshold) {
-        // Transition match
-        await db
-          .update(hostedMatchesTable)
-          .set({
-            status: "completed",
-            updatedAt: new Date(),
-          })
-          .where(eq(hostedMatchesTable.id, match.id));
+        if (ENABLE_ATTENDANCE_VERIFICATION) {
+          // ── Phase 3: Move to pending_verification ──────────────────────────
+          // Set verificationDeadline = matchEnd + 48h (only if not already set)
+          const verificationDeadline = match.verificationDeadline
+            ?? new Date(matchEndDate.getTime() + ATTENDANCE_GRACE_PERIOD_HOURS * 60 * 60 * 1000);
 
-        // Release slot (COMPLETED MATCH -> booked)
-        await db
-          .update(slotsTable)
-          .set({ status: "booked", updatedAt: new Date() })
-          .where(eq(slotsTable.id, match.slotId));
+          await db
+            .update(hostedMatchesTable)
+            .set({
+              status: "pending_verification",
+              verificationDeadline,
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(hostedMatchesTable.id, match.id),
+                // Guard: only update if still in an eligible status
+                inArray(hostedMatchesTable.status, ["confirmed", "fully_paid"])
+              )
+            );
 
-        // Mark payout rows ready_for_settlement
-        await db
-          .update(venuePayoutLedgerTable)
-          .set({ status: "ready_for_settlement" })
-          .where(
-            and(
-              eq(venuePayoutLedgerTable.referenceId, match.id),
-              eq(venuePayoutLedgerTable.status, "pending")
-            )
-          );
+          result.processed++;
+          result.details.push(`Match ${match.id} → pending_verification (deadline: ${verificationDeadline.toISOString()})`);
+        } else {
+          // ── Legacy path: Auto-complete ──────────────────────────────────────
+          await db
+            .update(hostedMatchesTable)
+            .set({
+              status: "completed",
+              updatedAt: new Date(),
+            })
+            .where(eq(hostedMatchesTable.id, match.id));
 
-        result.processed++;
-        result.details.push(`Match ${match.id} marked completed`);
+          await db
+            .update(slotsTable)
+            .set({ status: "booked", updatedAt: new Date() })
+            .where(eq(slotsTable.id, match.slotId));
+
+          await db
+            .update(venuePayoutLedgerTable)
+            .set({ status: "ready_for_settlement" })
+            .where(
+              and(
+                eq(venuePayoutLedgerTable.referenceId, match.id),
+                eq(venuePayoutLedgerTable.status, "pending")
+              )
+            );
+
+          result.processed++;
+          result.details.push(`Match ${match.id} marked completed (legacy auto-complete)`);
+        }
       }
     } catch (err) {
       result.errors++;
       result.details.push(`Match ${match.id} completion failed: ${String(err)}`);
       logger.error({ err, matchId: match.id }, "Match completion error");
+      await sendSlackAlert("Cron Error: processCompletedMatches", String(err), "error", { matchId: match.id });
     }
   }
 
   logger.info(result, "processCompletedMatches complete");
   return result;
-}
+});
+
 
 // ─── Reservation Cleanup Cron ──────────────────────────────────────────────────
 
@@ -249,7 +331,8 @@ export async function processCompletedMatches(): Promise<CronResult> {
  * Late-webhook safety: if Razorpay webhook arrives AFTER expiry, the webhook
  * handler checks reservationStatus === 'expired' and routes to 'refund_required'.
  */
-export async function releaseExpiredReservations(): Promise<CronResult> {
+
+export const releaseExpiredReservations = withCronObservability("releaseExpiredReservations", async function(): Promise<CronResult> {
   const result: CronResult = { processed: 0, errors: 0, details: [] };
   const now = new Date();
 
@@ -294,12 +377,13 @@ export async function releaseExpiredReservations(): Promise<CronResult> {
       result.errors++;
       result.details.push(`Reservation ${reservation.id} expiry failed: ${String(err)}`);
       logger.error({ err, reservationId: reservation.id }, "HM9: reservation expiry error");
+      await sendSlackAlert("Cron Error: releaseExpiredReservations", String(err), "error", { reservationId: reservation.id });
     }
   }
 
   logger.info(result, "HM9: releaseExpiredReservations complete");
   return result;
-}
+});
 
 // ─── Reconciliation Cron ──────────────────────────────────────────────────────
 
@@ -309,7 +393,8 @@ export async function releaseExpiredReservations(): Promise<CronResult> {
  * Audit-only cron that detects financial inconsistencies.
  * Does NOT mutate money. Writes discrepancies to reconciliationReportsTable.
  */
-export async function reconcileHostedMatchPayments(): Promise<CronResult> {
+
+export const reconcileHostedMatchPayments = withCronObservability("reconcileHostedMatchPayments", async function(): Promise<CronResult> {
   const result: CronResult = { processed: 0, errors: 0, details: [] };
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
 
@@ -344,6 +429,7 @@ export async function reconcileHostedMatchPayments(): Promise<CronResult> {
             sourceSystem: "reconciliation_cron",
             payload: { paymentId: payment.id, orderId: payment.razorpayOrderId, amount: payment.amount }
           });
+          await sendSlackAlert("Reconciliation Critical: Orphan Payment", `Payment ${payment.id} has no reservation`, "critical", { paymentId: payment.id });
           result.processed++;
           result.details.push(`ORPHAN PAYMENT: ${payment.id} has no reservation`);
         }
@@ -374,6 +460,7 @@ export async function reconcileHostedMatchPayments(): Promise<CronResult> {
         sourceSystem: "reconciliation_cron",
         payload: { reservationId: res.id, matchId: res.matchId, paymentId: res.paymentId }
       });
+      await sendSlackAlert("Reconciliation Critical: Ghost Reservation", `Reservation ${res.id} missing participant link`, "critical", { reservationId: res.id });
       result.processed++;
       result.details.push(`GHOST RESERVATION: ${res.id} missing participant link`);
     }
@@ -406,6 +493,7 @@ export async function reconcileHostedMatchPayments(): Promise<CronResult> {
           sourceSystem: "reconciliation_cron",
           payload: { participantId: p.id, matchId: p.matchId, paymentId }
         });
+        await sendSlackAlert("Reconciliation High: Orphan Participant", `Participant ${p.id} missing payout ledger entry`, "warning", { participantId: p.id, paymentId });
         result.processed++;
         result.details.push(`ORPHAN PARTICIPANT: ${p.id} missing payout ledger entry`);
       }
@@ -433,6 +521,7 @@ export async function reconcileHostedMatchPayments(): Promise<CronResult> {
         sourceSystem: "reconciliation_cron",
         payload: { payoutId: payout.id, amount: payout.grossAmount }
       });
+      await sendSlackAlert("Reconciliation High: Orphan Payout", `Payout ${payout.id} missing payment link`, "warning", { payoutId: payout.id });
       result.processed++;
     }
 
@@ -469,8 +558,14 @@ export async function reconcileHostedMatchPayments(): Promise<CronResult> {
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     logger.error({ err }, "HM10: reconcileHostedMatchPayments fatal error");
+    await sendSlackAlert("Cron Fatal Error: reconcileHostedMatchPayments", errorMsg, "critical");
     result.errors++;
     result.details.push(`FATAL ERROR: ${errorMsg}`);
     return result;
   }
+});
+
+export async function cleanupCronExecutions(daysToKeep = 30): Promise<void> {
+  const cutoff = new Date(Date.now() - daysToKeep * 24 * 60 * 60 * 1000);
+  await db.delete(cronExecutionsTable).where(lt(cronExecutionsTable.startedAt, cutoff));
 }

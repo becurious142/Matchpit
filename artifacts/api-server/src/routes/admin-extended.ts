@@ -19,6 +19,10 @@ import {
 } from "@workspace/db";
 import { eq, desc, asc, sum, count, and, inArray, ne, gt, lt, isNull, sql } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
+import { creditWallet, debitWallet } from "../lib/wallet";
+import { adminCityService } from "../domains/admin/admin-city.service";
+import { adminCouponService } from "../domains/admin/admin-coupon.service";
+import { adminFinanceService } from "../domains/admin/admin-finance.service";
 
 const router: IRouter = Router();
 
@@ -39,21 +43,8 @@ router.get("/admin/cities", requireAuth, async (req, res) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
 
-    const cities = await db
-      .select()
-      .from(citiesTable)
-      .orderBy(asc(citiesTable.launchPriority));
-
-    res.json(
-      cities.map((c) => ({
-        id: c.id,
-        cityName: c.cityName,
-        slug: c.slug,
-        isActive: c.isActive,
-        launchPriority: c.launchPriority,
-        createdAt: c.createdAt.toISOString(),
-      })),
-    );
+    const cities = await adminCityService.getCities();
+    res.json(cities);
   } catch (err) {
     req.log.error({ err }, "Error listing cities");
     res.status(500).json({ error: "internal_error", message: "Failed to list cities" });
@@ -77,24 +68,8 @@ router.post("/admin/cities", requireAuth, async (req, res) => {
       return;
     }
 
-    const [city] = await db
-      .insert(citiesTable)
-      .values({
-        cityName,
-        slug: slug.toLowerCase(),
-        isActive: isActive ?? false,
-        launchPriority: launchPriority ?? 99,
-      })
-      .returning();
-
-    res.status(201).json({
-      id: city.id,
-      cityName: city.cityName,
-      slug: city.slug,
-      isActive: city.isActive,
-      launchPriority: city.launchPriority,
-      createdAt: city.createdAt.toISOString(),
-    });
+    const city = await adminCityService.createCity(cityName, slug, isActive, launchPriority);
+    res.status(201).json(city);
   } catch (err) {
     req.log.error({ err }, "Error creating city");
     res.status(500).json({ error: "internal_error", message: "Failed to create city" });
@@ -113,25 +88,12 @@ router.patch("/admin/cities/:cityId", requireAuth, async (req, res) => {
       cityName?: string;
     };
 
-    const [updated] = await db
-      .update(citiesTable)
-      .set({ ...updates })
-      .where(eq(citiesTable.id, cityId))
-      .returning();
-
+    const updated = await adminCityService.updateCity(cityId, updates);
     if (!updated) {
       res.status(404).json({ error: "not_found", message: "City not found" });
       return;
     }
-
-    res.json({
-      id: updated.id,
-      cityName: updated.cityName,
-      slug: updated.slug,
-      isActive: updated.isActive,
-      launchPriority: updated.launchPriority,
-      createdAt: updated.createdAt.toISOString(),
-    });
+    res.json(updated);
   } catch (err) {
     req.log.error({ err }, "Error updating city");
     res.status(500).json({ error: "internal_error", message: "Failed to update city" });
@@ -163,18 +125,8 @@ router.get("/admin/finance", requireAuth, async (req, res) => {
         .from(venuePayoutLedgerTable),
     ]);
 
-    const totalGmv = Number(gmv[0]?.total ?? 0);
-    const pendingPayouts = Number(payoutPending[0]?.total ?? 0);
-    const paidPayouts = Number(payoutPaid[0]?.total ?? 0);
-    const commissionEarned = Number(payoutTotal[0]?.total ?? 0);
-
-    res.json({
-      totalGmv,
-      commissionEarned,
-      pendingVenuePayouts: pendingPayouts,
-      paidVenuePayouts: paidPayouts,
-      platformNetRevenue: totalGmv - pendingPayouts - paidPayouts,
-    });
+    const data = await adminFinanceService.getFinanceDashboard();
+    res.json(data);
   } catch (err) {
     req.log.error({ err }, "Error fetching finance data");
     res.status(500).json({ error: "internal_error", message: "Failed to fetch finance data" });
@@ -188,45 +140,8 @@ router.get("/admin/payouts", requireAuth, async (req, res) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
 
-    const payouts = await db
-      .select()
-      .from(venuePayoutLedgerTable)
-      .orderBy(desc(venuePayoutLedgerTable.createdAt))
-      .limit(100);
-
-    if (!payouts.length) {
-      res.json([]);
-      return;
-    }
-
-    const venueIds = [...new Set(payouts.map((p) => p.venueId))];
-    const venues = await db
-      .select({ id: venuesTable.id, name: venuesTable.name, city: venuesTable.city })
-      .from(venuesTable)
-      .where(inArray(venuesTable.id, venueIds));
-    const venueMap = new Map(venues.map((v) => [v.id, v]));
-
-    res.json(
-      payouts.map((p) => {
-        const v = venueMap.get(p.venueId);
-        return {
-          id: p.id,
-          venueId: p.venueId,
-          venueName: v?.name ?? "Unknown",
-          venueCity: v?.city ?? "",
-          referenceId: p.referenceId ?? null,
-          referenceType: p.referenceType,
-          grossAmount: Number(p.grossAmount),
-          razorpayFee: Number(p.razorpayFee),
-          platformCommission: Number(p.platformCommission),
-          venuePayable: Number(p.venuePayable),
-          status: p.status,
-          paidAt: p.paidAt?.toISOString() ?? null,
-          notes: p.notes ?? null,
-          createdAt: p.createdAt.toISOString(),
-        };
-      }),
-    );
+    const payoutsData = await adminFinanceService.getVenuePayouts();
+    res.json(payoutsData);
   } catch (err) {
     req.log.error({ err }, "Error listing payouts");
     res.status(500).json({ error: "internal_error", message: "Failed to list payouts" });
@@ -247,46 +162,25 @@ router.patch("/admin/payouts/:payoutId/status", requireAuth, async (req, res) =>
     // HM10 PATCH 6: Frozen Settlement Rows
     // Only pending or hold payouts can be manually mutated.
     // Once a payout is batched, processing, or paid, its amount/venue/batchId is IMMUTABLE.
-    const [payout] = await db
-      .select({ status: venuePayoutLedgerTable.status })
-      .from(venuePayoutLedgerTable)
-      .where(eq(venuePayoutLedgerTable.id, payoutId))
-      .limit(1);
-
-    if (!payout) {
-      res.status(404).json({ error: "not_found", message: "Payout record not found" });
-      return;
+    try {
+      const updated = await adminFinanceService.updatePayoutStatus(payoutId, status, notes);
+      
+      res.json({
+        id: updated.id,
+        venueId: updated.venueId,
+        referenceType: updated.referenceType,
+        venuePayable: Number(updated.venuePayable),
+        status: updated.status,
+        paidAt: updated.paidAt?.toISOString() ?? null,
+        notes: updated.notes ?? null,
+      });
+    } catch (e: any) {
+      if (e.message.includes("not found")) {
+        res.status(404).json({ error: "not_found", message: e.message });
+      } else {
+        res.status(400).json({ error: "frozen", message: e.message });
+      }
     }
-
-    if (["paid", "batched", "processing"].includes(payout.status)) {
-      res.status(400).json({ error: "frozen", message: "Cannot modify a payout that is already batched or paid" });
-      return;
-    }
-
-    const setFields: Record<string, unknown> = { status };
-    if (notes !== undefined) setFields.notes = notes;
-    if (status === "paid") setFields.paidAt = new Date();
-
-    const [updated] = await db
-      .update(venuePayoutLedgerTable)
-      .set(setFields)
-      .where(eq(venuePayoutLedgerTable.id, payoutId))
-      .returning();
-
-    if (!updated) {
-      res.status(404).json({ error: "not_found", message: "Payout record not found" });
-      return;
-    }
-
-    res.json({
-      id: updated.id,
-      venueId: updated.venueId,
-      referenceType: updated.referenceType,
-      venuePayable: Number(updated.venuePayable),
-      status: updated.status,
-      paidAt: updated.paidAt?.toISOString() ?? null,
-      notes: updated.notes ?? null,
-    });
   } catch (err) {
     req.log.error({ err }, "Error updating payout status");
     res.status(500).json({ error: "internal_error", message: "Failed to update payout" });
@@ -356,11 +250,7 @@ router.get("/admin/coupons", requireAuth, async (req, res) => {
     const admin = await requireAdmin(req, res);
     if (!admin) return;
 
-    const coupons = await db
-      .select()
-      .from(couponsTable)
-      .orderBy(desc(couponsTable.createdAt));
-
+    const coupons = await adminCouponService.getCoupons();
     res.json(
       coupons.map((c) => ({
         id: c.id,
@@ -416,21 +306,17 @@ router.post("/admin/coupons", requireAuth, async (req, res) => {
       return;
     }
 
-    const [coupon] = await db
-      .insert(couponsTable)
-      .values({
-        code: code.toUpperCase().trim(),
-        type,
-        value: String(value),
-        maxUses: maxUses ?? null,
-        minAmount: minAmount ? String(minAmount) : null,
-        firstBookingOnly: firstBookingOnly ?? false,
-        citySlug: citySlug ?? null,
-        sport: sport ?? null,
-        expiresAt: expiresAt ? new Date(expiresAt) : null,
-        isActive: true,
-      })
-      .returning();
+    const coupon = await adminCouponService.createCoupon({
+      code,
+      type,
+      value,
+      maxUses,
+      minAmount,
+      firstBookingOnly,
+      citySlug,
+      sport,
+      expiresAt,
+    });
 
     res.status(201).json({
       id: coupon.id,
@@ -463,17 +349,7 @@ router.patch("/admin/coupons/:couponId", requireAuth, async (req, res) => {
       expiresAt?: string | null;
     };
 
-    const setFields: Record<string, unknown> = {};
-    if (isActive !== undefined) setFields.isActive = isActive;
-    if (maxUses !== undefined) setFields.maxUses = maxUses;
-    if (expiresAt !== undefined)
-      setFields.expiresAt = expiresAt ? new Date(expiresAt) : null;
-
-    const [updated] = await db
-      .update(couponsTable)
-      .set(setFields)
-      .where(eq(couponsTable.id, couponId))
-      .returning();
+    const updated = await adminCouponService.updateCoupon(couponId, { isActive, maxUses, expiresAt });
 
     if (!updated) {
       res.status(404).json({ error: "not_found", message: "Coupon not found" });
@@ -518,23 +394,13 @@ router.post("/admin/wallet/adjust", requireAuth, async (req, res) => {
     }
 
     const currentBalance = Number(profile.walletBalance);
-    const delta = type === "credit" ? amount : -amount;
-    const newBalance = Math.max(0, currentBalance + delta);
+    let newBalance = currentBalance;
 
-    await db.transaction(async (tx) => {
-      await tx
-        .update(profilesTable)
-        .set({ walletBalance: String(newBalance) })
-        .where(eq(profilesTable.id, userId));
-
-      await tx.insert(walletLedgerTable).values({
-        userId,
-        type,
-        reason: `[Admin] ${reason}`,
-        amount: String(amount),
-        balanceAfter: String(newBalance),
-      });
-    });
+    if (type === "credit") {
+      newBalance = await creditWallet(db, userId, amount, `[Admin] ${reason}`, undefined, "expense_cashback_rewards", "credit", "admin_adjustment");
+    } else {
+      newBalance = await debitWallet(db, userId, amount, `[Admin] ${reason}`, undefined, "revenue_platform_fees", "debit", "admin_adjustment");
+    }
 
     res.json({
       userId,

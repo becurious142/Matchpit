@@ -10,6 +10,8 @@ import {
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { citiesTable } from "./cities";
+import { geography } from "./geo";
+import { index } from "drizzle-orm/pg-core";
 
 export const venuesTable = pgTable("venues", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -40,7 +42,10 @@ export const venuesTable = pgTable("venues", {
   isOnboardingDraft: boolean("is_onboarding_draft").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+  coordinates: geography("coordinates"),
+}, (table) => ({
+  coordinatesIdx: index("venue_coordinates_idx").using("gist", table.coordinates),
+}));
 
 export const insertVenueSchema = createInsertSchema(venuesTable).omit({
   id: true,

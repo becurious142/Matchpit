@@ -10,6 +10,8 @@ import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { venuesTable } from "./venues";
 
+import { settlementBatchesTable } from "./settlement-batches";
+
 export const payoutStatusEnum = pgEnum("payout_status", [
   "pending",
   "batched",       // HM10 PATCH 7: Assigned to a settlement batch
@@ -17,6 +19,7 @@ export const payoutStatusEnum = pgEnum("payout_status", [
   "paid",
   "hold",
   "ready_for_settlement",
+  "risk_hold",     // Phase 9: held for risk evaluation
 ]);
 
 export const venuePayoutLedgerTable = pgTable("venue_payout_ledger", {
@@ -40,13 +43,14 @@ export const venuePayoutLedgerTable = pgTable("venue_payout_ledger", {
   // HM8: idempotency guard
   paymentId: uuid("payment_id"),
   payoutType: text("payout_type", {
-    enum: ["host_commitment", "match_reserve", "match_final", "reversal"]
+    enum: ["host_commitment", "match_reserve", "match_final", "match_join", "reversal"]
   }),
   status: payoutStatusEnum("status").notNull().default("pending"),
   // HM10 PATCH 7 — Batch membership locking.
   // Once assigned, this field is IMMUTABLE — a row can only belong to one batch.
   // Reversals must create NEW additive negative rows, never modify this field.
-  settlementBatchId: uuid("settlement_batch_id"),
+  settlementBatchId: uuid("settlement_batch_id")
+    .references(() => settlementBatchesTable.id),
   paidAt: timestamp("paid_at"),
   notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),

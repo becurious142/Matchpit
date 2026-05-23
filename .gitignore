@@ -86,3 +86,11 @@ scripts/load-test-*.ts
 .replitignore
 replit.md
 **/.replit-artifact/
+
+# AI Coding Assistant Artifacts
+.claude/
+.kiro/
+IMPLEMENTATION_GAP_ANALYSIS.md
+PRODUCTION_READINESS_AUDIT.md
+PHASE_*.md
+.dependency-cruiser.js

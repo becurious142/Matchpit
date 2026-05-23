@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import * as schema from "./schema";
+export * from "drizzle-orm";
 
 const { Pool } = pg;
 
@@ -39,6 +40,14 @@ export const pool = new Proxy({} as pg.Pool, {
     return getPool()[prop as keyof pg.Pool];
   },
 });
+
+export async function closePool() {
+  if (poolInstance) {
+    await poolInstance.end();
+    poolInstance = null;
+    dbInstance = null;
+  }
+}
 
 export * from "./schema";
 export * from "./constants/sports";

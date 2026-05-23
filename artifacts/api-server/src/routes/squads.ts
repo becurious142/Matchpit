@@ -425,7 +425,7 @@ router.post("/squads/challenge/:id/respond", requireAuth, async (req, res) => {
           currentPlayers: 0,
           reserveFee: "0",
           finalFeePerPlayer: "0",
-          totalVenueCost: "0",
+          totalVenueCost: 0,
           status: "open",
         }).returning();
         hostedMatchId = match.id;

@@ -15,6 +15,8 @@ import { requireAuth, getProfileByClerkId } from "../lib/auth";
 import { razorpay, verifyRazorpaySignature, getRazorpayKeyId } from "../lib/razorpay";
 import { reverseMatchPayouts } from "../lib/payouts";
 import { FINAL_PAYMENT_DEADLINE_HOURS } from "../lib/post-payment";
+import { idempotencyMiddleware } from "../lib/idempotency";
+import { DistributedLockService, LockAcquisitionError } from "../lib/locking/distributed-lock";
 
 const router: IRouter = Router();
 
@@ -526,7 +528,7 @@ router.get("/hosted-matches/:matchId", async (req, res) => {
 });
 
 // POST /hosted-matches/:matchId/join
-router.post("/hosted-matches/:matchId/join", requireAuth, async (req, res) => {
+router.post("/hosted-matches/:matchId/join", requireAuth, idempotencyMiddleware(), async (req, res) => {
   try {
     const { userId } = getAuth(req);
     const profile = await getProfileByClerkId(userId!);
@@ -580,35 +582,53 @@ router.post("/hosted-matches/:matchId/join", requireAuth, async (req, res) => {
       return;
     }
 
-    // Create participant record
-    const [participant] = await db
-      .insert(hostedMatchParticipantsTable)
-      .values({
-        matchId,
-        userId: profile.id,
-        status: "reserved",
-        reservePaymentId,
-        finalPaymentId: null,
-        reservePaidAmount,
-        finalPaidAmount: 0,
-        paymentStatus: "reserve_paid",
-      })
-      .returning();
+    // Create participant record under distributed lock to prevent overfilling
+    const participantResult = await DistributedLockService.withLock(`join_match:${matchId}`, async () => {
+        // Re-read match inside the lock
+        const [lockedMatch] = await db
+          .select()
+          .from(hostedMatchesTable)
+          .where(eq(hostedMatchesTable.id, matchId))
+          .limit(1);
 
-    // Increment player count and finance
-    const newCount = match.currentPlayers + 1;
-    const nowBecomesConfirmed = newCount >= match.minPlayers && match.status === "open";
-    await db
-      .update(hostedMatchesTable)
-      .set({
-        currentPlayers: newCount,
-        status: newCount >= match.minPlayers ? "confirmed" : "open",
-        grossReserveCollected: sql`${hostedMatchesTable.grossReserveCollected} + ${reservePaidAmount}`,
-        totalCollected: sql`${hostedMatchesTable.totalCollected} + ${reservePaidAmount}`,
-        refundExposure: sql`${hostedMatchesTable.refundExposure} + ${reservePaidAmount}`,
-        updatedAt: new Date(),
-      })
-      .where(eq(hostedMatchesTable.id, matchId));
+        if (!lockedMatch || lockedMatch.currentPlayers >= lockedMatch.totalPlayers) {
+          throw new Error("match_full");
+        }
+
+        const [participant] = await db
+          .insert(hostedMatchParticipantsTable)
+          .values({
+            matchId,
+            userId: profile.id,
+            status: "reserved",
+            reservePaymentId,
+            finalPaymentId: null,
+            reservePaidAmount,
+            finalPaidAmount: 0,
+            paymentStatus: "reserve_paid",
+          })
+          .returning();
+
+        // Increment player count and finance
+        const newCount = lockedMatch.currentPlayers + 1;
+        const nowBecomesConfirmed = newCount >= lockedMatch.minPlayers && lockedMatch.status === "open";
+        await db
+          .update(hostedMatchesTable)
+          .set({
+            currentPlayers: newCount,
+            status: newCount >= lockedMatch.minPlayers ? "confirmed" : lockedMatch.status,
+            grossReserveCollected: sql`${hostedMatchesTable.grossReserveCollected} + ${reservePaidAmount}`,
+            totalCollected: sql`${hostedMatchesTable.totalCollected} + ${reservePaidAmount}`,
+            refundExposure: sql`${hostedMatchesTable.refundExposure} + ${reservePaidAmount}`,
+            updatedAt: new Date(),
+          })
+          .where(eq(hostedMatchesTable.id, matchId));
+
+        return { participant, newCount, nowBecomesConfirmed, lockedMatch };
+      });
+
+      const { participant, newCount, nowBecomesConfirmed, lockedMatch } = participantResult;
+
 
     // PATCH 4 — Assign finalPaymentDeadline to all reserved participants when match first becomes confirmed
     if (nowBecomesConfirmed) {
@@ -676,7 +696,7 @@ router.post("/hosted-matches/:matchId/join", requireAuth, async (req, res) => {
             userId: p.userId,
             type: "final_payment_due" as const,
             title: "Match Confirmed — Final Payment Due",
-            body: `The ${match.sport} match on ${match.date} is confirmed! Complete your final payment to lock your spot.`,
+            body: `The ${lockedMatch.sport} match on ${lockedMatch.date} is confirmed! Complete your final payment to lock your spot.`,
             referenceId: matchId,
           })),
         );
@@ -684,7 +704,15 @@ router.post("/hosted-matches/:matchId/join", requireAuth, async (req, res) => {
     }
 
     res.status(201).json(formatParticipant(participant, profile, null));
-  } catch (err) {
+  } catch (err: any) {
+    if (err instanceof LockAcquisitionError) {
+      res.status(409).json({ error: "conflict", message: "Match join already in progress." });
+      return;
+    }
+    if (err.message === "match_full") {
+      res.status(409).json({ error: "match_full", message: "Match is full" });
+      return;
+    }
     req.log.error({ err }, "Error joining match");
     res.status(500).json({ error: "internal_error", message: "Failed to join match" });
   }
@@ -903,7 +931,7 @@ router.post("/:matchId/cancel", requireAuth, async (req, res) => {
           try {
             const refundAmount = (p.reservePaidAmount || 0) + (p.finalPaidAmount || 0);
             if (refundAmount > 0) {
-              const { processCancellationRefund } = await import("../lib/wallet");
+              const { processCancellationRefund } = await import("../lib/refund-routing");
               await processCancellationRefund(
                 p.userId,
                 p.id,
@@ -928,7 +956,7 @@ router.post("/:matchId/cancel", requireAuth, async (req, res) => {
       // Refund host
       if (match.grossHostCollected > 0) {
         try {
-          const { processCancellationRefund } = await import("../lib/wallet");
+          const { processCancellationRefund } = await import("../lib/refund-routing");
           await processCancellationRefund(
             match.hostUserId,
             match.id,
@@ -1115,7 +1143,7 @@ router.post("/hosted-matches/:matchId/drop-spot", requireAuth, async (req, res) 
     // Refund reserve fee to wallet
     if (participant.reservePaymentId) {
       try {
-        const { processCancellationRefund } = await import("../lib/wallet");
+        const { processCancellationRefund } = await import("../lib/refund-routing");
         await processCancellationRefund(profile.id, participant.id, "hosted_match", Number(match.reserveFee ?? 0));
       } catch (e) { /* non-fatal */ }
     }

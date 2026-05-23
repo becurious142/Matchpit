@@ -25,6 +25,8 @@ import {
 } from "@workspace/db";
 import { eq, and, lt, gt, count, sum, inArray, ne, sql } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
+import { CacheMonitor } from "../lib/cache-monitor";
+import { sseManager } from "../lib/sse-manager";
 
 const router: IRouter = Router();
 
@@ -349,6 +351,11 @@ router.get("/admin/monitoring/metrics", requireAuth, async (req, res) => {
       asOf: new Date().toISOString(),
       daily: series,
       totals,
+      realtime: {
+        cache: CacheMonitor.metrics,
+        redisMemory: await CacheMonitor.getRedisMemoryUsage(),
+        sseConnections: sseManager.getConnectionCount(),
+      }
     });
   } catch (err) {
     req.log.error({ err }, "Error fetching monitoring metrics");

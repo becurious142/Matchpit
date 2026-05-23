@@ -15,10 +15,16 @@ import { slotsTable } from "./slots";
 import { profilesTable } from "./profiles";
 
 export const bookingStatusEnum = pgEnum("booking_status", [
-  "pending_payment",
+  "pending",
+  "reserving_slot",
+  "payment_pending",
   "confirmed",
+  "cancel_pending",
   "cancelled",
   "completed",
+  "disputed",
+  "risk_hold",
+  "expired"
 ]);
 
 export const bookingsTable = pgTable("bookings", {
@@ -37,7 +43,7 @@ export const bookingsTable = pgTable("bookings", {
   startTime: text("start_time").notNull(),
   endTime: text("end_time").notNull(),
   totalAmount: numeric("total_amount", { precision: 10, scale: 2 }).notNull(),
-  status: bookingStatusEnum("status").notNull().default("pending_payment"),
+  status: bookingStatusEnum("status").notNull().default("payment_pending"),
   paymentId: uuid("payment_id"),
   razorpayOrderId: text("razorpay_order_id"),
   razorpayPaymentId: text("razorpay_payment_id"),

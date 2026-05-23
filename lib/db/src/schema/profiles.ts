@@ -6,7 +6,9 @@ import {
   integer,
   timestamp,
   uuid,
+  check,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -39,6 +41,10 @@ export const profilesTable = pgTable("profiles", {
   strikePoints: integer("strike_points").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => {
+  return [
+    check("wallet_balance_check", sql`${table.walletBalance} >= 0`)
+  ];
 });
 
 export const insertProfileSchema = createInsertSchema(profilesTable).omit({

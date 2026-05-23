@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main", "staging" ]
+  pull_request:
+    branches: [ "main", "staging" ]
+
+jobs:
+  test-and-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck API Server
+        run: pnpm --filter @workspace/api-server exec tsc --noEmit
+
+      - name: Validate DB Schema
+        run: |
+          pnpm --filter @workspace/db exec drizzle-kit check
+          pnpm --filter @workspace/db exec drizzle-kit generate
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/matchpit
+
+      - name: Lint
+        run: pnpm lint --if-present
+
+      - name: Test
+        run: pnpm test --if-present

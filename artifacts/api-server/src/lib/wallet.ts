@@ -1,17 +1,45 @@
-import { db } from "@workspace/db";
 import {
+  db,
   walletLedgerTable,
   profilesTable,
   rewardEventsTable,
   referralConfigTable,
   bookingsTable,
   hostedMatchesTable,
-  hostedMatchParticipantsTable,
 } from "@workspace/db";
+import {
+  HOST_MILESTONE_REWARDS,
+  getAllMilestones,
+  getMilestoneReward,
+} from "./financial-config";
 import { eq, and, count, sql } from "drizzle-orm";
 import { logger } from "./logger";
+import { DistributedLockService } from "./locking/distributed-lock";
+import { FinancialLedgerService } from "./ledger";
+import type { WalletTransactionType } from "@workspace/db";
 
 type AnyDb = typeof db;
+
+/**
+ * Thrown when attempting to debit more than available wallet balance.
+ *
+ * This error indicates:
+ * - User wallet balance < requested debit amount
+ * - Transaction was prevented (balance unchanged)
+ * - Client should prompt user to add funds or use alternative payment method
+ */
+export class InsufficientFundsError extends Error {
+  constructor(
+    public userId: string,
+    public requestedAmount: number,
+    public availableBalance: number,
+  ) {
+    super(
+      `Insufficient wallet balance: requested ₹${requestedAmount}, available ₹${availableBalance}`
+    );
+    this.name = "InsufficientFundsError";
+  }
+}
 
 const DEFAULT_REWARDS = {
   signup_bonus: 50,
@@ -36,52 +64,158 @@ export async function creditWallet(
   amount: number,
   reason: string,
   referenceId?: string,
+  offsetAccount: typeof import("@workspace/db").ledgerAccountEnum.enumValues[number] = "expense_cashback_rewards",
+  transactionType: WalletTransactionType = "reward",
+  referenceType: string = "wallet_credit"
 ): Promise<number> {
-  const [updated] = await db_
-    .update(profilesTable)
-    .set({ walletBalance: sql`wallet_balance + ${amount.toString()}::numeric` })
-    .where(eq(profilesTable.id, userId))
-    .returning({ balance: profilesTable.walletBalance });
+  return await DistributedLockService.withLock(`wallet:${userId}`, async () => {
+    return await db_.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(profilesTable)
+        .set({ walletBalance: sql`wallet_balance + ${amount.toString()}::numeric` })
+        .where(eq(profilesTable.id, userId))
+        .returning({ balance: profilesTable.walletBalance });
 
-  const newBalance = Number(updated?.balance ?? 0);
+      const newBalance = Number(updated?.balance ?? 0);
 
-  await db_.insert(walletLedgerTable).values({
-    userId,
-    type: "credit",
-    reason,
-    amount: amount.toString(),
-    balanceAfter: newBalance.toString(),
-    referenceId: referenceId ?? null,
+      // Legacy Wallet Ledger (for frontend display)
+      await tx.insert(walletLedgerTable).values({
+        userId,
+        type: "credit",
+        reason,
+        amount: amount.toString(),
+        balanceBefore: (newBalance - amount).toString(),
+        balanceAfter: newBalance.toString(),
+        transactionType,
+        referenceType,
+        referenceId: referenceId ?? null,
+        description: reason,
+      });
+
+      // True Double-Entry Financial Ledger
+      await FinancialLedgerService.transfer(
+        offsetAccount,
+        "liability_user_wallet",
+        amount,
+        {
+          entityId: userId,
+          referenceType,
+          referenceId: referenceId ?? userId,
+          description: reason,
+          tx: tx as any
+        }
+      );
+
+      return newBalance;
+    });
   });
-
-  return newBalance;
 }
 
+/**
+ * Debit wallet with overdraft protection.
+ *
+ * CONCURRENCY-SAFE: Uses conditional UPDATE to prevent negative balances.
+ *
+ * Algorithm:
+ * 1. UPDATE wallet_balance = wallet_balance - amount
+ *    WHERE user_id = ? AND wallet_balance >= amount
+ * 2. If 0 rows updated → insufficient funds → throw error
+ * 3. If 1 row updated → success → log ledger entry
+ *
+ * Race condition protection:
+ * - Two concurrent debits of ₹80 with balance ₹100:
+ *   - First debit: succeeds (₹100 - ₹80 = ₹20)
+ *   - Second debit: fails (₹20 < ₹80, WHERE clause false)
+ *   - InsufficientFundsError thrown for second request
+ *
+ * Database-level protection:
+ * - Profiles table has CHECK (wallet_balance >= 0)
+ * - Even if app logic fails, DB constraint prevents negative
+ *
+ * @param db_ - Database connection or transaction
+ * @param userId - User ID to debit
+ * @param amount - Amount to debit (must be > 0)
+ * @param reason - Human-readable reason for ledger
+ * @param referenceId - Optional reference (booking/match ID)
+ * @returns New wallet balance after debit
+ * @throws {InsufficientFundsError} If balance < amount
+ */
 export async function debitWallet(
   db_: AnyDb,
   userId: string,
   amount: number,
   reason: string,
   referenceId?: string,
+  offsetAccount: typeof import("@workspace/db").ledgerAccountEnum.enumValues[number] = "revenue_platform_fees",
+  transactionType: WalletTransactionType = "debit",
+  referenceType: string = "wallet_debit"
 ): Promise<number> {
-  const [updated] = await db_
-    .update(profilesTable)
-    .set({ walletBalance: sql`wallet_balance - ${amount.toString()}::numeric` })
-    .where(eq(profilesTable.id, userId))
-    .returning({ balance: profilesTable.walletBalance });
+  return await DistributedLockService.withLock(`wallet:${userId}`, async () => {
+    return await db_.transaction(async (tx) => {
+      // Phase 2A: Conditional UPDATE prevents overdraft
+      // WHERE clause ensures balance >= amount BEFORE debit
+      const [updated] = await tx
+        .update(profilesTable)
+        .set({ walletBalance: sql`wallet_balance - ${amount.toString()}::numeric` })
+        .where(
+          and(
+            eq(profilesTable.id, userId),
+            sql`wallet_balance >= ${amount.toString()}::numeric`
+          )
+        )
+        .returning({ balance: profilesTable.walletBalance });
 
-  const newBalance = Number(updated?.balance ?? 0);
+      // If no row was updated, balance was insufficient
+      if (!updated) {
+        // Fetch actual balance for error message
+        const [profile] = await tx
+          .select({ balance: profilesTable.walletBalance })
+          .from(profilesTable)
+          .where(eq(profilesTable.id, userId))
+          .limit(1);
 
-  await db_.insert(walletLedgerTable).values({
-    userId,
-    type: "debit",
-    reason,
-    amount: amount.toString(),
-    balanceAfter: newBalance.toString(),
-    referenceId: referenceId ?? null,
+        const availableBalance = Number(profile?.balance ?? 0);
+        throw new InsufficientFundsError(userId, amount, availableBalance);
+      }
+
+      const newBalance = Number(updated.balance);
+
+      // Legacy Wallet Ledger
+      await tx.insert(walletLedgerTable).values({
+        userId,
+        type: "debit",
+        reason,
+        amount: amount.toString(),
+        balanceBefore: (newBalance + amount).toString(),
+        balanceAfter: newBalance.toString(),
+        transactionType,
+        referenceType,
+        referenceId: referenceId ?? null,
+        description: reason,
+      });
+
+      // True Double-Entry Financial Ledger
+      await FinancialLedgerService.transfer(
+        "liability_user_wallet",
+        offsetAccount,
+        amount,
+        {
+          entityId: userId,
+          referenceType,
+          referenceId: referenceId ?? userId,
+          description: reason,
+          tx: tx as any
+        }
+      );
+
+      logger.info(
+        { userId, amount, newBalance, reason },
+        "Wallet debited successfully"
+      );
+
+      return newBalance;
+    });
   });
-
-  return newBalance;
 }
 
 export async function processSignupBonus(userId: string): Promise<boolean> {
@@ -263,49 +397,94 @@ export async function processFirstMatchCashback(
   return true;
 }
 
-export async function processUnderfillRefund(
-  userId: string,
-  matchId: string,
-  amount: number,
-): Promise<void> {
-  await db.transaction(async (tx) => {
-    const txDb = tx as unknown as AnyDb;
-    await creditWallet(txDb, userId, amount, `Refund — match cancelled (underfilled)`, matchId);
-    await txDb.insert(rewardEventsTable).values({
-      userId,
-      eventType: "underfill_refund",
-      amount: amount.toString(),
-      referenceId: matchId,
-      referenceType: "hosted_match",
-      notes: "Match cancelled due to insufficient players",
-    });
-  });
-}
 
-export async function processCancellationRefund(
+/**
+ * Process host milestone rewards for completed matches.
+ *
+ * IDEMPOTENT: Each milestone credited exactly once per user.
+ *
+ * Algorithm:
+ * 1. Fetch all previously awarded milestones for user
+ * 2. For each milestone ≤ completedHostedCount:
+ *    - Skip if already awarded
+ *    - Credit wallet with milestone amount
+ *    - Log reward_events entry with metadata
+ *
+ * Milestones (Phase 2A amounts):
+ * - 1 match → ₹25
+ * - 5 matches → ₹50
+ * - 10 matches → ₹100
+ * - 25 matches → ₹250
+ * - 50 matches → ₹500
+ * - 100 matches → ₹1,000
+ *
+ * Backfill support:
+ * - If user has 10 completed matches but never received rewards:
+ *   - Awards milestones 1, 5, AND 10 in single call
+ *   - Total: ₹175 credited
+ *
+ * @param userId - User ID to process rewards for
+ * @param completedHostedCount - Current completed hosted match count
+ */
+export async function processHostMilestoneRewards(
   userId: string,
-  referenceId: string,
-  referenceType: "booking" | "hosted_match",
-  amount: number,
-  txDb?: AnyDb,
+  completedHostedCount: number,
 ): Promise<void> {
-  const execute = async (dbInstance: AnyDb) => {
-    await creditWallet(dbInstance, userId, amount, `Cancellation refund`, referenceId);
-    await dbInstance.insert(rewardEventsTable).values({
-      userId,
-      eventType: "cancellation_refund",
-      amount: amount.toString(),
-      referenceId,
-      referenceType,
-    });
-  };
+  // Fetch all existing host_milestone_reward events for this user in one query
+  const existingMilestoneEvents = await db
+    .select({ metadata: rewardEventsTable.metadata })
+    .from(rewardEventsTable)
+    .where(
+      and(
+        eq(rewardEventsTable.userId, userId),
+        eq(rewardEventsTable.eventType, "host_milestone_reward"),
+      ),
+    );
 
-  if (txDb) {
-    await execute(txDb);
-  } else {
+  // Build a set of already-awarded milestone thresholds
+  const awardedThresholds = new Set<number>(
+    existingMilestoneEvents
+      .map((row) => {
+        const meta = row.metadata as { milestoneCount?: number } | null;
+        return meta?.milestoneCount;
+      })
+      .filter((v): v is number => typeof v === "number"),
+  );
+
+  // Process each milestone threshold in ascending order
+  // Use centralized milestone config from financial-config
+  const thresholds = getAllMilestones();
+
+  for (const threshold of thresholds) {
+    if (threshold > completedHostedCount) continue;
+    if (awardedThresholds.has(threshold)) continue;
+
+    const rewardAmount = getMilestoneReward(threshold);
+
     await db.transaction(async (tx) => {
-      await execute(tx as unknown as AnyDb);
+      const txDb = tx as unknown as AnyDb;
+      await creditWallet(
+        txDb,
+        userId,
+        rewardAmount,
+        `Host milestone reward — ${threshold} hosted match${threshold === 1 ? "" : "es"} 🏆`,
+      );
+      await txDb.insert(rewardEventsTable).values({
+        userId,
+        eventType: "host_milestone_reward",
+        amount: rewardAmount.toString(),
+        metadata: {
+          milestoneCount: threshold,
+          rewardAmount,
+          completedHostedCountAtAward: completedHostedCount,
+        },
+      });
     });
+
+    logger.info(
+      { userId, threshold, rewardAmount, completedHostedCount },
+      "Host milestone reward credited (Phase 2A amounts)"
+    );
   }
 }
 
@@ -330,6 +509,12 @@ export async function seedDefaultReferralConfig(): Promise<void> {
     { key: "referral_referee", value: "50", description: "Welcome reward for referred user (₹)" },
     { key: "first_booking_cashback", value: "75", description: "Cashback on first private booking (₹)" },
     { key: "first_match_cashback", value: "50", description: "Cashback on first hosted match (₹)" },
+    { key: "host_milestone_1", value: "50", description: "Host milestone reward at 1 completed match (₹)" },
+    { key: "host_milestone_5", value: "100", description: "Host milestone reward at 5 completed matches (₹)" },
+    { key: "host_milestone_10", value: "200", description: "Host milestone reward at 10 completed matches (₹)" },
+    { key: "host_milestone_25", value: "500", description: "Host milestone reward at 25 completed matches (₹)" },
+    { key: "host_milestone_50", value: "1000", description: "Host milestone reward at 50 completed matches (₹)" },
+    { key: "host_milestone_100", value: "2000", description: "Host milestone reward at 100 completed matches (₹)" },
   ];
 
   for (const cfg of configs) {

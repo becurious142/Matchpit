@@ -11,9 +11,13 @@ import {
 import { eq, and, desc, inArray, sql, gte, lte } from "drizzle-orm";
 import { requireAuth, getProfileByClerkId } from "../lib/auth";
 import { verifyRazorpaySignature } from "../lib/razorpay";
-import { debitWallet, processFirstBookingCashback, processReferralRewards, processCancellationRefund } from "../lib/wallet";
+import { debitWallet, processFirstBookingCashback, processReferralRewards } from "../lib/wallet";
+import { processCancellationRefund } from "../lib/refund-routing";
 import { generateBookingPayout } from "../lib/payouts";
 import { logger } from "../lib/logger";
+import { idempotencyMiddleware } from "../lib/idempotency";
+import { DistributedLockService, LockAcquisitionError } from "../lib/locking/distributed-lock";
+import { MatchBookingMachine } from "../lib/state-machines/match-booking-machine";
 
 const router: IRouter = Router();
 
@@ -129,7 +133,7 @@ router.get("/bookings", requireAuth, async (req, res) => {
 // ─── POST /bookings ───────────────────────────────────────────────────────────
 // Accepts slotIds[] for multi-slot bookings. All slots must be consecutive,
 // available, and not owner-blocked. Total is computed server-side.
-router.post("/bookings", requireAuth, async (req, res) => {
+router.post("/bookings", requireAuth, idempotencyMiddleware(), async (req, res) => {
   try {
     const { userId } = getAuth(req);
     const profile = await getProfileByClerkId(userId!);
@@ -229,7 +233,9 @@ router.post("/bookings", requireAuth, async (req, res) => {
     const walletCreditEarned = Math.floor(totalAmount * 0.03);
 
     // ── Atomic transaction ──────────────────────────────────────────────────
-    const result = await db.transaction(async (tx) => {
+    try {
+      await DistributedLockService.withLock(`booking:${venueId}:${profile.id}`, async () => {
+        const result = await db.transaction(async (tx) => {
       if (walletUsed > 0) {
         const txDb = tx as unknown as typeof db;
         await debitWallet(txDb, profile.id, walletUsed, "Wallet used for booking payment", firstSlot.id);
@@ -316,7 +322,15 @@ router.post("/bookings", requireAuth, async (req, res) => {
     await processFirstBookingCashback(profile.id, booking.id);
     await processReferralRewards(profile.id);
 
-    res.status(201).json(formatBooking(booking, venue));
+        res.status(201).json(formatBooking(booking, venue));
+      });
+    } catch (err: any) {
+      if (err instanceof LockAcquisitionError) {
+        res.status(409).json({ error: "conflict", message: "Booking already in progress." });
+        return;
+      }
+      throw err;
+    }
   } catch (err) {
     req.log.error({ err }, "Error creating booking");
     res.status(500).json({ error: "internal_error", message: "Failed to create booking" });
@@ -355,7 +369,7 @@ router.get("/bookings/:bookingId", requireAuth, async (req, res) => {
 
 // ─── POST /bookings/:bookingId/cancel ─────────────────────────────────────────
 // Restores ALL slots covered by the booking time range (multi-slot aware).
-router.post("/bookings/:bookingId/cancel", requireAuth, async (req, res) => {
+router.post("/bookings/:bookingId/cancel", requireAuth, idempotencyMiddleware(), async (req, res) => {
   try {
     const { userId } = getAuth(req);
     const profile = await getProfileByClerkId(userId!);
@@ -381,9 +395,11 @@ router.post("/bookings/:bookingId/cancel", requireAuth, async (req, res) => {
       return;
     }
 
-    // Restore ALL slots in the time range covered by this booking
-    await db
-      .update(slotsTable)
+    try {
+      await DistributedLockService.withLock(`booking:${bookingId}`, async () => {
+        // Restore ALL slots in the time range covered by this booking
+        await db
+          .update(slotsTable)
       .set({ status: "available", updatedAt: new Date() })
       .where(
         and(
@@ -394,11 +410,8 @@ router.post("/bookings/:bookingId/cancel", requireAuth, async (req, res) => {
         ),
       );
 
-    const [updated] = await db
-      .update(bookingsTable)
-      .set({ status: "cancelled", updatedAt: new Date() })
-      .where(eq(bookingsTable.id, bookingId))
-      .returning();
+    // State Machine transition to cancelled
+    await MatchBookingMachine.transition(bookingId, "cancelled", "User requested cancellation");
 
     // Cancellation refund — 50% back to wallet, awaited before response
     const refund = Math.floor(Number(booking.totalAmount) * 0.5);
@@ -410,7 +423,16 @@ router.post("/bookings/:bookingId/cancel", requireAuth, async (req, res) => {
       }
     }
 
-    res.json(formatBooking(updated, null));
+        const [updatedBooking] = await db.select().from(bookingsTable).where(eq(bookingsTable.id, bookingId));
+        res.json(formatBooking(updatedBooking, null));
+      });
+    } catch (err: any) {
+      if (err instanceof LockAcquisitionError) {
+        res.status(409).json({ error: "conflict", message: "Cancellation in progress." });
+        return;
+      }
+      throw err;
+    }
   } catch (err) {
     req.log.error({ err }, "Error cancelling booking");
     res.status(500).json({ error: "internal_error", message: "Failed to cancel booking" });

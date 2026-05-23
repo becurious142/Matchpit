@@ -16,6 +16,7 @@ export const paymentTypeEnum = pgEnum("payment_type", [
   "host_commitment",
   "match_reserve",
   "match_final",
+  "match_join",   // Phase 2B: full upfront payment at join time
   "refund",
   "cashback",
 ]);
@@ -58,6 +59,7 @@ export const paymentsTable = pgTable("payments", {
       "host_commitment",
       "match_reserve",
       "match_final",
+      "match_join",   // Phase 2B
       "wallet",
       "refund"
     ]

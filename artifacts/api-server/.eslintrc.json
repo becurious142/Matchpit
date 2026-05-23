@@ -1,0 +1,21 @@
+{
+  "parser": "@typescript-eslint/parser",
+  "plugins": ["@typescript-eslint"],
+  "rules": {
+    "no-restricted-syntax": [
+      "error",
+      {
+        "selector": "MemberExpression[object.name='process'][property.name='env']",
+        "message": "Direct access to process.env is strictly forbidden. Please use config/env.ts instead."
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["src/config/env.ts", "vitest.config.ts", "build.mjs", "check-schema.mjs"],
+      "rules": {
+        "no-restricted-syntax": "off"
+      }
+    }
+  ]
+}

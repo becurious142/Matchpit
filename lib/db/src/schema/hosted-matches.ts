@@ -15,6 +15,8 @@ import { venuesTable } from "./venues";
 import { slotsTable } from "./slots";
 import { profilesTable } from "./profiles";
 import { citiesTable } from "./cities";
+import { geography } from "./geo";
+import { index } from "drizzle-orm/pg-core";
 
 export const matchSkillLevelEnum = pgEnum("match_skill_level", [
   "beginner",
@@ -32,6 +34,9 @@ export const matchStatusEnum = pgEnum("match_status", [
   "cancelled",
   "expired",
   "cancelled_underfilled",
+  "pending_verification", // Phase 3: awaiting attendance quorum
+  "disputed",            // Phase 3: quorum not reached after grace period
+  "risk_hold",           // Phase 9: held for risk review
 ]);
 
 export const matchFinancialStatusEnum = pgEnum("match_financial_status", [
@@ -77,9 +82,15 @@ export const hostedMatchesTable = pgTable("hosted_matches", {
   lockDeadline: timestamp("lock_deadline"),
   cancelledReason: text("cancelled_reason"),
   underfillRefundIssued: boolean("underfill_refund_issued").notNull().default(false),
+  // Phase 3: Attendance verification
+  verificationDeadline: timestamp("verification_deadline"),   // 48h after match end
+  settlementReleasesAt: timestamp("settlement_releases_at"),  // 24h after quorum reached
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+  coordinates: geography("coordinates"),
+}, (table) => ({
+  coordinatesIdx: index("hosted_matches_coordinates_idx").using("gist", table.coordinates),
+}));
 
 export const insertHostedMatchSchema = createInsertSchema(hostedMatchesTable).omit({
   id: true,

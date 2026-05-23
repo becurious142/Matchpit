@@ -1,3 +1,4 @@
+import { env } from "../config/env";
 import { type Request, type Response, type NextFunction } from "express";
 import { getAuth } from "@clerk/express";
 import { db } from "@workspace/db";
@@ -29,7 +30,7 @@ export async function requireAuth(
       // We do this lazily here so every authenticated endpoint is safe.
       try {
         const { createClerkClient } = await import("@clerk/backend");
-        const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+        const clerkClient = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
         const clerkUser = await clerkClient.users.getUser(userId);
         const email = clerkUser.emailAddresses?.[0]?.emailAddress ?? "";
         const fullName =

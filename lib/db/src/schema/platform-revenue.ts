@@ -19,7 +19,7 @@ export const platformRevenueLedgerTable = pgTable("platform_revenue_ledger", {
   // HM8 FORENSIC PATCH \u2014 idempotency: prevents duplicate revenue rows on verify retry / webhook replay
   paymentId: uuid("payment_id"),
   revenueType: text("revenue_type", {
-    enum: ["host_commitment", "match_reserve", "match_final", "reversal"]
+    enum: ["host_commitment", "match_reserve", "match_final", "match_join", "reversal"]
   }),
   notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),

@@ -16,6 +16,7 @@ export const participantStatusEnum = pgEnum("participant_status", [
   "final_paid",
   "cancelled",
   "dropped_unpaid",
+  "joined", // Legacy support for old records in DB
 ]);
 
 export const hostedMatchParticipantsTable = pgTable("hosted_match_participants", {

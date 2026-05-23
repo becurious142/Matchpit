@@ -1,4 +1,5 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, Request, Response } from "express";
+import { getMetrics } from "../lib/metrics";
 import healthRouter from "./health";
 import profileRouter from "./profile";
 import venuesRouter from "./venues";
@@ -23,10 +24,35 @@ import adminSeedRouter from "./admin-seed";
 import adminAnalyticsRouter from "./admin-analytics";
 import adminMaintenanceRouter from "./admin-maintenance";
 import adminMonitoringRouter from "./admin-monitoring";
-import { chaosRouter } from "./chaos";
+import { adminOpsRouter } from "./admin-ops";
+import { reconciliationRouter } from "./reconciliation";
+import { adminDisputesRouter } from "./admin-disputes";
+import { adminNotificationsRouter } from "./admin-notifications";
+import { adminQueuesRouter } from "./admin-queues";
+import { adminRiskRouter } from "./admin-risk";
+import { globalLimiter, discoveryLimiter } from "../middlewares/rate-limiter";
+import { v1Router } from "./api/v1";
+import { healthProbesRouter } from "./health-probes";
+import { adminQueueMetricsRouter } from "./admin-queue-metrics";
+import { adminQueuesBoardRouter } from "./admin-queues-board";
 
 const router: IRouter = Router();
 
+router.use(globalLimiter);
+
+router.use("/api/v1", discoveryLimiter, v1Router);
+
+router.get("/metrics", async (req: Request, res: Response) => {
+  try {
+    res.set("Content-Type", "text/plain");
+    const metrics = await getMetrics();
+    res.send(metrics);
+  } catch (ex) {
+    res.status(500).send("Error generating metrics");
+  }
+});
+
+router.use(healthProbesRouter);
 router.use(healthRouter);
 router.use(profileRouter);
 router.use(citiesRouter);
@@ -51,6 +77,13 @@ router.use(adminMonitoringRouter);
 router.use(moderationRouter);
 router.use(communityRouter);
 router.use(squadsRouter);
-router.use(chaosRouter);
+router.use("/admin/ops", adminOpsRouter);
+router.use("/admin/reconciliation", reconciliationRouter);
+router.use("/admin/disputes", adminDisputesRouter);
+router.use("/admin/notifications", adminNotificationsRouter);
+router.use("/admin/risk", adminRiskRouter);
+router.use(adminQueuesRouter);
+router.use("/admin", adminQueueMetricsRouter);
+router.use(adminQueuesBoardRouter);
 
 export default router;
