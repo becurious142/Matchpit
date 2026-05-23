@@ -31,6 +31,9 @@ COPY --from=builder /prod/api-server ./
 ENV NODE_ENV=production
 ENV PORT=8080
 
+# Install pnpm in the final container just in case Railway forces a pnpm start command
+RUN npm install -g pnpm
+
 # Run as non-root user
 USER node
 
