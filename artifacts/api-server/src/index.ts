@@ -30,6 +30,17 @@ const server = app.listen(port, async (err?: Error) => {
   } catch (seedErr) {
     logger.warn({ err: seedErr }, "Failed to auto-seed referral config — non-fatal");
   }
+
+  // Allow running workers inside API for free tier deployment
+  if (process.env.START_WORKERS_IN_API === "true") {
+    try {
+      const { startWorkers } = await import("./queues/registry");
+      await startWorkers();
+      logger.info("BullMQ Workers started inside API process (START_WORKERS_IN_API=true)");
+    } catch (workerErr) {
+      logger.error({ err: workerErr }, "Failed to start workers in API process");
+    }
+  }
 });
 
 async function shutdown(signal: string) {
@@ -48,6 +59,11 @@ async function shutdown(signal: string) {
       const { sseManager } = await import("./lib/sse-manager");
       sseManager.closeAll();
       
+      if (process.env.START_WORKERS_IN_API === "true") {
+        const { stopWorkers } = await import("./queues/registry");
+        await stopWorkers();
+      }
+
       const { closeConnections } = await import("./queues/redis");
       await closeConnections();
 
