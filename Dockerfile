@@ -10,11 +10,11 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY artifacts/api-server/package.json ./artifacts/api-server/
 COPY lib/db/package.json ./lib/db/
 
-# Install dependencies
-RUN pnpm install --frozen-lockfile
-
 # Copy source code
 COPY . .
+
+# Install dependencies
+RUN pnpm install --frozen-lockfile
 
 # Build api-server and dependencies
 RUN pnpm --filter @workspace/api-server build
