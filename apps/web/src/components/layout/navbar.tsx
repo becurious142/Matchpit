@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { UserButton, SignedIn, SignedOut } from "@clerk/nextjs";
+import { UserButton } from "@clerk/nextjs";
+import { auth } from "@clerk/nextjs/server";
 
-export function Navbar() {
+export async function Navbar() {
+  const { userId } = await auth();
+
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container mx-auto flex h-16 items-center justify-between px-4">
@@ -20,17 +23,18 @@ export function Navbar() {
           </nav>
         </div>
         <div className="flex items-center gap-4">
-          <SignedIn>
+          {userId ? (
             <UserButton afterSignOutUrl="/" />
-          </SignedIn>
-          <SignedOut>
-            <Link href="/sign-in">
-              <Button variant="ghost" size="sm">Log in</Button>
-            </Link>
-            <Link href="/sign-up">
-              <Button size="sm">Sign up</Button>
-            </Link>
-          </SignedOut>
+          ) : (
+            <>
+              <Link href="/sign-in">
+                <Button variant="ghost" size="sm">Log in</Button>
+              </Link>
+              <Link href="/sign-up">
+                <Button size="sm">Sign up</Button>
+              </Link>
+            </>
+          )}
         </div>
       </div>
     </header>

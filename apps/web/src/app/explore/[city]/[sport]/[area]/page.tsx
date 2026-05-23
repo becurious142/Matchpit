@@ -1,6 +1,17 @@
 import React from "react";
 import { notFound } from "next/navigation";
-import { SeoContentEngine } from "../../../../../../../artifacts/api-server/src/domains/seo/seo-content-engine"; // MOCKED IMPORT FOR SCAFFOLDING
+// Mocked backend service since Next.js cannot import from outside the workspace in production
+const SeoContentEngine = {
+  generateLocalityPage: async (params: any) => {
+    return {
+      title: `Play ${params.sport} in ${params.area}, ${params.city}`,
+      description: `Find the best venues and matches for ${params.sport} in ${params.area}.`,
+      schemaOrg: {},
+      venueCount: 5,
+      matchCount: 10
+    };
+  }
+};
 import { MapPin, Users, Calendar } from "lucide-react";
 
 interface Props {

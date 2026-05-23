@@ -15,43 +15,33 @@ export default function VenueDashboardLayout({ children }: { children: ReactNode
           <SidebarContent>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <Link href="/venue-dashboard">
-                    <LayoutDashboard />
-                    <span>Overview</span>
-                  </Link>
+                <SidebarMenuButton render={<Link href="/venue-dashboard" />}>
+                  <LayoutDashboard />
+                  <span>Overview</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <Link href="/venue-dashboard/calendar">
-                    <Calendar />
-                    <span>Occupancy</span>
-                  </Link>
+                <SidebarMenuButton render={<Link href="/venue-dashboard/calendar" />}>
+                  <Calendar />
+                  <span>Occupancy</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <Link href="/venue-dashboard/settlements">
-                    <CreditCard />
-                    <span>Settlements</span>
-                  </Link>
+                <SidebarMenuButton render={<Link href="/venue-dashboard/settlements" />}>
+                  <CreditCard />
+                  <span>Settlements</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <Link href="/venue-dashboard/intelligence">
-                    <BarChart />
-                    <span>Intelligence</span>
-                  </Link>
+                <SidebarMenuButton render={<Link href="/venue-dashboard/intelligence" />}>
+                  <BarChart />
+                  <span>Intelligence</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <Link href="/venue-dashboard/settings">
-                    <Settings />
-                    <span>Settings</span>
-                  </Link>
+                <SidebarMenuButton render={<Link href="/venue-dashboard/settings" />}>
+                  <Settings />
+                  <span>Settings</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>

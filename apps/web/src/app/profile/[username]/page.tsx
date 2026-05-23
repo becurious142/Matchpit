@@ -1,6 +1,19 @@
 import React from "react";
 import { notFound } from "next/navigation";
-import { PlayerProfileService } from "../../../../../../../artifacts/api-server/src/domains/player-profile/player-profile.service"; // MOCKED
+// Mocked backend service since Next.js cannot import from outside the workspace in production
+const PlayerProfileService = {
+  getPublicProfile: async (username: string) => {
+    return {
+      username,
+      displayName: username.charAt(0).toUpperCase() + username.slice(1),
+      avatarUrl: "",
+      reliabilityBadge: "Regular Player",
+      matchesPlayed: 12,
+      bio: "Sports enthusiast.",
+      favoriteSports: ["Football", "Tennis"]
+    };
+  }
+};
 import { ShieldCheck, Activity, Users, MapPin } from "lucide-react";
 
 interface Props {

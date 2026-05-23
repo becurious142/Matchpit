@@ -19,7 +19,7 @@ export function MatchIntelligence() {
               </div>
               <div>
                 <h4 className="font-medium text-sm">Repeat Customers</h4>
-                <p className="text-xs text-muted-foreground">Players returning >2 times</p>
+                <p className="text-xs text-muted-foreground">Players returning &gt;2 times</p>
               </div>
             </div>
             <div className="text-right">
@@ -35,7 +35,7 @@ export function MatchIntelligence() {
               </div>
               <div>
                 <h4 className="font-medium text-sm">Cancellation Rate</h4>
-                <p className="text-xs text-muted-foreground">Bookings cancelled < 24h</p>
+                <p className="text-xs text-muted-foreground">Bookings cancelled &lt; 24h</p>
               </div>
             </div>
             <div className="text-right">

@@ -3,7 +3,6 @@ import dynamic from "next/dynamic";
 
 const HeavyComponent = dynamic(() => import("../components/HeavyComponent"), {
   loading: () => <p className="p-8 text-center">Loading component...</p>,
-  ssr: false, // Don't SSR heavy interactive components
 });
 
 export default function Home() {
