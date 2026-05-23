@@ -161,7 +161,7 @@ importers:
         version: 0.28.0
       next:
         specifier: 16.2.6
-        version: 16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        version: 16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       prettier:
         specifier: ^3.8.1
         version: 3.8.3
@@ -173,13 +173,13 @@ importers:
     dependencies:
       '@base-ui/react':
         specifier: ^1.5.0
-        version: 1.5.0(@date-fns/tz@1.4.1)(@types/react@19.2.14)(date-fns@3.6.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        version: 1.5.0(@date-fns/tz@1.4.1)(@types/react@19.2.14)(date-fns@3.6.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@clerk/nextjs':
         specifier: ^7.4.0
-        version: 7.4.0(next@16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        version: 7.4.0(next@16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@tanstack/react-query':
         specifier: 'catalog:'
-        version: 5.100.9(react@19.2.4)
+        version: 5.100.9(react@19.1.0)
       '@workspace/api-client-react':
         specifier: workspace:*
         version: link:../../lib/api-client-react
@@ -193,43 +193,43 @@ importers:
         specifier: ^0.7.1
         version: 0.7.1
       clsx:
-        specifier: ^2.1.1
+        specifier: 'catalog:'
         version: 2.1.1
       date-fns:
         specifier: ^3.6.0
         version: 3.6.0
       framer-motion:
         specifier: 'catalog:'
-        version: 12.38.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        version: 12.38.0(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       lucide-react:
-        specifier: ^1.16.0
-        version: 1.16.0(react@19.2.4)
+        specifier: 'catalog:'
+        version: 0.545.0(react@19.1.0)
       mapbox-gl:
         specifier: ^3.24.0
         version: 3.24.0
       next:
         specifier: 16.2.6
-        version: 16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        version: 16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       nuqs:
         specifier: ^2.8.9
-        version: 2.8.9(next@16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(react@19.2.4)
+        version: 2.8.9(next@16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react@19.1.0)
       posthog-js:
         specifier: ^1.375.0
         version: 1.375.0
       react:
-        specifier: 19.2.4
-        version: 19.2.4
+        specifier: 'catalog:'
+        version: 19.1.0
       react-dom:
-        specifier: 19.2.4
-        version: 19.2.4(react@19.2.4)
+        specifier: 'catalog:'
+        version: 19.1.0(react@19.1.0)
       react-map-gl:
         specifier: ^8.1.1
-        version: 8.1.1(mapbox-gl@3.24.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        version: 8.1.1(mapbox-gl@3.24.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       shadcn:
         specifier: ^4.8.0
         version: 4.8.0(@types/node@20.19.41)(typescript@5.9.3)
       tailwind-merge:
-        specifier: ^3.6.0
+        specifier: 'catalog:'
         version: 3.6.0
       tw-animate-css:
         specifier: ^1.4.0
@@ -276,13 +276,13 @@ importers:
         version: 7.1.5
       '@clerk/backend':
         specifier: ^3.4.4
-        version: 3.4.7(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        version: 3.4.7(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@clerk/express':
         specifier: ^2.1.12
-        version: 2.1.15(express@5.2.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        version: 2.1.15(express@5.2.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@clerk/shared':
         specifier: ^4.9.0
-        version: 4.10.2(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        version: 4.10.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@opentelemetry/api':
         specifier: ^1.9.1
         version: 1.9.1
@@ -611,7 +611,7 @@ importers:
     dependencies:
       '@tanstack/react-query':
         specifier: 'catalog:'
-        version: 5.100.9(react@19.2.4)
+        version: 5.100.9(react@19.1.0)
 
   lib/api-spec:
     devDependencies:
@@ -4792,11 +4792,6 @@ packages:
     peerDependencies:
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
-  lucide-react@1.16.0:
-    resolution: {integrity: sha512-dYwyPzb4MEKpGUmNYk3WKWPnMrHs3FKM+q94kAnJrcDIqqn1hq2xY8scaS2ovsOCM5D51ey2gaRG3PBb1vgoYQ==}
-    peerDependencies:
-      react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
-
   lunr@2.3.9:
     resolution: {integrity: sha512-zTU3DaZaF3Rt9rhN3uBMGQD3dD2/vFQqnvZCDv4dl5iOzq2IZQqTxu90r4E5J+nP70J3ilqVCrbho2eWaeW8Ow==}
 
@@ -5417,11 +5412,6 @@ packages:
     peerDependencies:
       react: ^19.1.0
 
-  react-dom@19.2.4:
-    resolution: {integrity: sha512-AXJdLo8kgMbimY95O2aKQqsz2iWi9jMgKJhRBAxECE4IFxfcazB2LmzloIoibJI3C12IlY20+KFaLv+71bUJeQ==}
-    peerDependencies:
-      react: ^19.2.4
-
   react-hook-form@7.75.0:
     resolution: {integrity: sha512-Ovv94H+0p3sJ7B9B5QxPuCP1u8V/cHuVGyH55cSwodYDtoJwK+fqk3vjfIgSX59I2U/bU4z0nRJ9HMLpNiWEmw==}
     engines: {node: '>=18.0.0'}
@@ -5506,10 +5496,6 @@ packages:
 
   react@19.1.0:
     resolution: {integrity: sha512-FS+XFBNvn3GTAWq26joslQgWNoFu08F4kl0J4CgdNKADkdSGXQyTCnKteIAJy96Br6YbpEU1LSzV5dYtjMkMDg==}
-    engines: {node: '>=0.10.0'}
-
-  react@19.2.4:
-    resolution: {integrity: sha512-9nfp2hYpCwOjAN+8TZFGhtWEwgvWHXqESH8qT89AT/lWklpLON22Lc8pEtnpsZz7VmawabSU0gCjnj8aC0euHQ==}
     engines: {node: '>=0.10.0'}
 
   readdirp@5.0.0:
@@ -5659,9 +5645,6 @@ packages:
 
   scheduler@0.26.0:
     resolution: {integrity: sha512-NlHwttCI/l5gCPR3D1nNXtWABUmBwvZpEQiD4IXSbIDq8BzLIK/7Ir5gTFSGZDUu37K5cMNp0hFtzO38sC7gWA==}
-
-  scheduler@0.27.0:
-    resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
 
   secure-json-parse@4.1.0:
     resolution: {integrity: sha512-l4KnYfEyqYJxDwlNVyRfO2E4NTHfMKAWdUuA8J0yve2Dz/E/PdBepY03RvyJpssIpRFwJoCD55wA+mEDs6ByWA==}
@@ -6890,28 +6873,28 @@ snapshots:
       '@babel/helper-string-parser': 7.27.1
       '@babel/helper-validator-identifier': 7.28.5
 
-  '@base-ui/react@1.5.0(@date-fns/tz@1.4.1)(@types/react@19.2.14)(date-fns@3.6.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@base-ui/react@1.5.0(@date-fns/tz@1.4.1)(@types/react@19.2.14)(date-fns@3.6.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
       '@babel/runtime': 7.29.2
-      '@base-ui/utils': 0.2.9(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      '@floating-ui/react-dom': 2.1.8(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@base-ui/utils': 0.2.9(@types/react@19.2.14)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      '@floating-ui/react-dom': 2.1.8(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@floating-ui/utils': 0.2.11
-      react: 19.2.4
-      react-dom: 19.2.4(react@19.2.4)
-      use-sync-external-store: 1.6.0(react@19.2.4)
+      react: 19.1.0
+      react-dom: 19.1.0(react@19.1.0)
+      use-sync-external-store: 1.6.0(react@19.1.0)
     optionalDependencies:
       '@date-fns/tz': 1.4.1
       '@types/react': 19.2.14
       date-fns: 3.6.0
 
-  '@base-ui/utils@0.2.9(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@base-ui/utils@0.2.9(@types/react@19.2.14)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
       '@babel/runtime': 7.29.2
       '@floating-ui/utils': 0.2.11
-      react: 19.2.4
-      react-dom: 19.2.4(react@19.2.4)
+      react: 19.1.0
+      react-dom: 19.1.0(react@19.1.0)
       reselect: 5.2.0
-      use-sync-external-store: 1.6.0(react@19.2.4)
+      use-sync-external-store: 1.6.0(react@19.1.0)
     optionalDependencies:
       '@types/react': 19.2.14
 
@@ -6935,42 +6918,42 @@ snapshots:
     dependencies:
       '@bull-board/api': 7.1.5(@bull-board/ui@7.1.5)
 
-  '@clerk/backend@3.4.12(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@clerk/backend@3.4.12(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
-      '@clerk/shared': 4.13.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@clerk/shared': 4.13.0(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       standardwebhooks: 1.0.0
       tslib: 2.8.1
     transitivePeerDependencies:
       - react
       - react-dom
 
-  '@clerk/backend@3.4.7(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@clerk/backend@3.4.7(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
-      '@clerk/shared': 4.10.2(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@clerk/shared': 4.10.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       standardwebhooks: 1.0.0
       tslib: 2.8.1
     transitivePeerDependencies:
       - react
       - react-dom
 
-  '@clerk/express@2.1.15(express@5.2.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@clerk/express@2.1.15(express@5.2.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
-      '@clerk/backend': 3.4.7(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      '@clerk/shared': 4.10.2(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@clerk/backend': 3.4.7(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      '@clerk/shared': 4.10.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       express: 5.2.1
       tslib: 2.8.1
     transitivePeerDependencies:
       - react
       - react-dom
 
-  '@clerk/nextjs@7.4.0(next@16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@clerk/nextjs@7.4.0(next@16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
-      '@clerk/backend': 3.4.12(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      '@clerk/react': 6.7.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      '@clerk/shared': 4.13.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      next: 16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      react: 19.2.4
-      react-dom: 19.2.4(react@19.2.4)
+      '@clerk/backend': 3.4.12(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      '@clerk/react': 6.7.0(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      '@clerk/shared': 4.13.0(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      next: 16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      react: 19.1.0
+      react-dom: 19.1.0(react@19.1.0)
       server-only: 0.0.1
       tslib: 2.8.1
 
@@ -6981,11 +6964,11 @@ snapshots:
       react-dom: 19.1.0(react@19.1.0)
       tslib: 2.8.1
 
-  '@clerk/react@6.7.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@clerk/react@6.7.0(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
-      '@clerk/shared': 4.13.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      react: 19.2.4
-      react-dom: 19.2.4(react@19.2.4)
+      '@clerk/shared': 4.13.0(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      react: 19.1.0
+      react-dom: 19.1.0(react@19.1.0)
       tslib: 2.8.1
 
   '@clerk/shared@4.10.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
@@ -6999,7 +6982,7 @@ snapshots:
       react: 19.1.0
       react-dom: 19.1.0(react@19.1.0)
 
-  '@clerk/shared@4.10.2(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@clerk/shared@4.13.0(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
       '@tanstack/query-core': 5.100.9
       dequal: 2.0.3
@@ -7007,19 +6990,8 @@ snapshots:
       js-cookie: 3.0.5
       std-env: 3.10.0
     optionalDependencies:
-      react: 19.2.4
-      react-dom: 19.2.4(react@19.2.4)
-
-  '@clerk/shared@4.13.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
-    dependencies:
-      '@tanstack/query-core': 5.100.9
-      dequal: 2.0.3
-      glob-to-regexp: 0.4.1
-      js-cookie: 3.0.5
-      std-env: 3.10.0
-    optionalDependencies:
-      react: 19.2.4
-      react-dom: 19.2.4(react@19.2.4)
+      react: 19.1.0
+      react-dom: 19.1.0(react@19.1.0)
 
   '@commander-js/extra-typings@14.0.0(commander@14.0.3)':
     dependencies:
@@ -7128,12 +7100,6 @@ snapshots:
       '@floating-ui/dom': 1.7.6
       react: 19.1.0
       react-dom: 19.1.0(react@19.1.0)
-
-  '@floating-ui/react-dom@2.1.8(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
-    dependencies:
-      '@floating-ui/dom': 1.7.6
-      react: 19.2.4
-      react-dom: 19.2.4(react@19.2.4)
 
   '@floating-ui/utils@0.2.11': {}
 
@@ -8606,11 +8572,6 @@ snapshots:
       '@tanstack/query-core': 5.100.9
       react: 19.1.0
 
-  '@tanstack/react-query@5.100.9(react@19.2.4)':
-    dependencies:
-      '@tanstack/query-core': 5.100.9
-      react: 19.2.4
-
   '@ts-morph/common@0.27.0':
     dependencies:
       fast-glob: 3.3.3
@@ -8961,18 +8922,18 @@ snapshots:
   '@unrs/resolver-binding-win32-x64-msvc@1.12.2':
     optional: true
 
-  '@vis.gl/react-mapbox@8.1.1(mapbox-gl@3.24.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@vis.gl/react-mapbox@8.1.1(mapbox-gl@3.24.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
-      react: 19.2.4
-      react-dom: 19.2.4(react@19.2.4)
+      react: 19.1.0
+      react-dom: 19.1.0(react@19.1.0)
     optionalDependencies:
       mapbox-gl: 3.24.0
 
-  '@vis.gl/react-maplibre@8.1.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@vis.gl/react-maplibre@8.1.1(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
       '@maplibre/maplibre-gl-style-spec': 19.3.3
-      react: 19.2.4
-      react-dom: 19.2.4(react@19.2.4)
+      react: 19.1.0
+      react-dom: 19.1.0(react@19.1.0)
 
   '@vitejs/plugin-react@5.2.0(vite@7.3.3(@types/node@25.6.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.0))':
     dependencies:
@@ -10273,15 +10234,6 @@ snapshots:
       react: 19.1.0
       react-dom: 19.1.0(react@19.1.0)
 
-  framer-motion@12.38.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4):
-    dependencies:
-      motion-dom: 12.38.0
-      motion-utils: 12.36.0
-      tslib: 2.8.1
-    optionalDependencies:
-      react: 19.2.4
-      react-dom: 19.2.4(react@19.2.4)
-
   fresh@2.0.0: {}
 
   fs-extra@11.3.5:
@@ -10884,10 +10836,6 @@ snapshots:
     dependencies:
       react: 19.1.0
 
-  lucide-react@1.16.0(react@19.2.4):
-    dependencies:
-      react: 19.2.4
-
   lunr@2.3.9: {}
 
   luxon@3.7.2: {}
@@ -11095,16 +11043,16 @@ snapshots:
       react: 19.1.0
       react-dom: 19.1.0(react@19.1.0)
 
-  next@16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4):
+  next@16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0):
     dependencies:
       '@next/env': 16.2.6
       '@swc/helpers': 0.5.15
       baseline-browser-mapping: 2.10.29
       caniuse-lite: 1.0.30001792
       postcss: 8.4.31
-      react: 19.2.4
-      react-dom: 19.2.4(react@19.2.4)
-      styled-jsx: 5.1.6(react@19.2.4)
+      react: 19.1.0
+      react-dom: 19.1.0(react@19.1.0)
+      styled-jsx: 5.1.6(react@19.1.0)
     optionalDependencies:
       '@next/swc-darwin-arm64': 16.2.6
       '@next/swc-darwin-x64': 16.2.6
@@ -11155,12 +11103,12 @@ snapshots:
       path-key: 4.0.0
       unicorn-magic: 0.3.0
 
-  nuqs@2.8.9(next@16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(react@19.2.4):
+  nuqs@2.8.9(next@16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0))(react@19.1.0):
     dependencies:
       '@standard-schema/spec': 1.0.0
-      react: 19.2.4
+      react: 19.1.0
     optionalDependencies:
-      next: 16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      next: 16.2.6(@opentelemetry/api@1.9.1)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
 
   object-assign@4.1.1: {}
 
@@ -11611,11 +11559,6 @@ snapshots:
       react: 19.1.0
       scheduler: 0.26.0
 
-  react-dom@19.2.4(react@19.2.4):
-    dependencies:
-      react: 19.2.4
-      scheduler: 0.27.0
-
   react-hook-form@7.75.0(react@19.1.0):
     dependencies:
       react: 19.1.0
@@ -11628,12 +11571,12 @@ snapshots:
 
   react-is@18.3.1: {}
 
-  react-map-gl@8.1.1(mapbox-gl@3.24.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4):
+  react-map-gl@8.1.1(mapbox-gl@3.24.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0):
     dependencies:
-      '@vis.gl/react-mapbox': 8.1.1(mapbox-gl@3.24.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      '@vis.gl/react-maplibre': 8.1.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      react: 19.2.4
-      react-dom: 19.2.4(react@19.2.4)
+      '@vis.gl/react-mapbox': 8.1.1(mapbox-gl@3.24.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      '@vis.gl/react-maplibre': 8.1.1(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      react: 19.1.0
+      react-dom: 19.1.0(react@19.1.0)
     optionalDependencies:
       mapbox-gl: 3.24.0
 
@@ -11689,8 +11632,6 @@ snapshots:
       react-dom: 19.1.0(react@19.1.0)
 
   react@19.1.0: {}
-
-  react@19.2.4: {}
 
   readdirp@5.0.0: {}
 
@@ -11857,8 +11798,6 @@ snapshots:
   safer-buffer@2.1.2: {}
 
   scheduler@0.26.0: {}
-
-  scheduler@0.27.0: {}
 
   secure-json-parse@4.1.0: {}
 
@@ -12205,10 +12144,10 @@ snapshots:
 
   strnum@2.3.0: {}
 
-  styled-jsx@5.1.6(react@19.2.4):
+  styled-jsx@5.1.6(react@19.1.0):
     dependencies:
       client-only: 0.0.1
-      react: 19.2.4
+      react: 19.1.0
 
   superagent@10.3.0:
     dependencies:
@@ -12511,10 +12450,6 @@ snapshots:
   use-sync-external-store@1.6.0(react@19.1.0):
     dependencies:
       react: 19.1.0
-
-  use-sync-external-store@1.6.0(react@19.2.4):
-    dependencies:
-      react: 19.2.4
 
   util-deprecate@1.0.2: {}
 
