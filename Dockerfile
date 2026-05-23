@@ -14,7 +14,7 @@ COPY lib/db/package.json ./lib/db/
 COPY . .
 
 # Install dependencies
-RUN pnpm install --frozen-lockfile
+RUN pnpm install
 
 # Build api-server and dependencies
 RUN pnpm --filter @workspace/api-server build
