@@ -20,7 +20,7 @@ COPY . .
 RUN pnpm --filter @workspace/api-server build
 
 # Remove devDependencies to save space
-RUN pnpm --filter @workspace/api-server deploy --prod /prod/api-server
+RUN pnpm --filter @workspace/api-server deploy --prod --legacy /prod/api-server
 
 FROM node:20-alpine AS runner
 WORKDIR /app
