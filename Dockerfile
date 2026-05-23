@@ -3,7 +3,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Install pnpm
-RUN npm install -g pnpm@9
+RUN npm install -g pnpm
 
 # Copy workspace config and package.json files
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
@@ -20,7 +20,7 @@ RUN pnpm install
 RUN pnpm --filter @workspace/api-server build
 
 # Remove devDependencies to save space
-RUN pnpm --filter @workspace/api-server deploy --prod /prod/api-server
+RUN pnpm --filter @workspace/api-server deploy --prod --legacy /prod/api-server
 
 FROM node:20-alpine AS runner
 WORKDIR /app
