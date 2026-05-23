@@ -24,7 +24,7 @@ export async function Navbar() {
         </div>
         <div className="flex items-center gap-4">
           {userId ? (
-            <UserButton afterSignOutUrl="/" />
+            <UserButton />
           ) : (
             <>
               <Link href="/sign-in">
