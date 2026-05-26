@@ -8,7 +8,7 @@ interface UIState {
     venueId?: string;
     amount?: number;
     currency?: string;
-    type?: "reserve" | "full" | "wallet_topup";
+    type?: "booking" | "host_commitment" | "match_reserve" | "match_final" | "wallet_topup";
   } | null;
   
   // Actions

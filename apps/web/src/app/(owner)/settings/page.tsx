@@ -15,13 +15,13 @@ export default function OwnerSettingsPage() {
   const { data: profile, isLoading, refetch } = useGetMyProfile();
   const updateProfile = useUpdateMyProfile();
 
-  const [displayName, setDisplayName] = useState("");
+  const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
   const [city, setCity] = useState("");
 
   useEffect(() => {
     if (profile) {
-      setDisplayName(profile.displayName ?? "");
+      setFullName(profile.fullName ?? "");
       setPhone(profile.phone ?? "");
       setCity(profile.city ?? "");
     }
@@ -30,7 +30,7 @@ export default function OwnerSettingsPage() {
   const handleSave = async () => {
     try {
       await updateProfile.mutateAsync({
-        data: { displayName, phone, city },
+        data: { fullName, phone, city },
       });
       toast.success("Settings updated successfully!");
       refetch();
@@ -89,11 +89,11 @@ export default function OwnerSettingsPage() {
 
             <div className="space-y-4">
               <div className="grid gap-2">
-                <Label htmlFor="displayName" className="text-white/80">Full Name</Label>
+                <Label htmlFor="fullName" className="text-white/80">Full Name</Label>
                 <Input
-                  id="displayName"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
+                  id="fullName"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
                   className="bg-[#0B1020] border-white/[0.07] focus-visible:ring-primary"
                 />
               </div>

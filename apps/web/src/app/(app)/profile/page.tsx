@@ -4,9 +4,8 @@ import { useUser } from "@clerk/nextjs";
 import { useGetMyProfile, useUpdateMyProfile } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Loader2, Save, User, Camera } from "lucide-react";
+import { Loader2, Save, User, Camera, Star, Shield, Zap } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 
@@ -15,20 +14,22 @@ export default function ProfilePage() {
   const { data: profile, isLoading, refetch } = useGetMyProfile();
   const updateProfile = useUpdateMyProfile();
 
-  const [displayName, setDisplayName] = useState("");
-  const [bio, setBio] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [city, setCity] = useState("");
+  const [phone, setPhone] = useState("");
 
   useEffect(() => {
     if (profile) {
-      setDisplayName(profile.displayName ?? "");
-      setBio(profile.bio ?? "");
+      setFullName(profile.fullName ?? "");
+      setCity(profile.city ?? "");
+      setPhone(profile.phone ?? "");
     }
   }, [profile]);
 
   const handleSave = async () => {
     try {
       await updateProfile.mutateAsync({
-        data: { displayName, bio },
+        data: { fullName, city, phone },
       });
       toast.success("Profile updated successfully!");
       refetch();
@@ -64,13 +65,13 @@ export default function ProfilePage() {
           </button>
         </div>
         <div>
-          <p className="text-lg font-bold text-white">{user?.firstName} {user?.lastName}</p>
-          <p className="text-sm text-muted-foreground">{user?.primaryEmailAddress?.emailAddress}</p>
+          <p className="text-lg font-bold text-white">{profile?.fullName || user?.firstName}</p>
+          <p className="text-sm text-muted-foreground">{profile?.email}</p>
           <div className="flex items-center gap-2 mt-1">
             <span className="text-xs font-semibold bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full capitalize">
               {(user?.publicMetadata?.role as string) || "player"}
             </span>
-            {(user?.publicMetadata?.onboardingComplete as boolean) && (
+            {profile?.onboardingComplete && (
               <span className="text-xs font-semibold bg-green-500/10 text-green-400 border border-green-500/20 px-2 py-0.5 rounded-full">
                 ✓ Onboarded
               </span>
@@ -82,26 +83,37 @@ export default function ProfilePage() {
       {/* Edit Form */}
       <div className="glass-card p-5 rounded-2xl border border-white/[0.07] space-y-5">
         <div className="space-y-2">
-          <Label htmlFor="displayName" className="text-white/80 text-sm">Display Name</Label>
+          <Label htmlFor="fullName" className="text-white/80 text-sm">Full Name</Label>
           <Input
-            id="displayName"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="Enter your display name"
+            id="fullName"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            placeholder="Enter your full name"
             className="bg-[#0B1020] border-white/[0.07] focus-visible:ring-primary"
           />
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="bio" className="text-white/80 text-sm">Bio</Label>
-          <Textarea
-            id="bio"
-            value={bio}
-            onChange={(e) => setBio(e.target.value)}
-            placeholder="Tell the squad who you are..."
-            rows={3}
-            className="bg-[#0B1020] border-white/[0.07] focus-visible:ring-primary resize-none"
-          />
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="city" className="text-white/80 text-sm">City</Label>
+            <Input
+              id="city"
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
+              placeholder="Your city"
+              className="bg-[#0B1020] border-white/[0.07] focus-visible:ring-primary"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="phone" className="text-white/80 text-sm">Phone</Label>
+            <Input
+              id="phone"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+91 9876543210"
+              className="bg-[#0B1020] border-white/[0.07] focus-visible:ring-primary"
+            />
+          </div>
         </div>
 
         <Button
@@ -117,16 +129,17 @@ export default function ProfilePage() {
         </Button>
       </div>
 
-      {/* Stats Cards */}
+      {/* Stats Cards — real schema fields */}
       <div className="mt-6 grid grid-cols-3 gap-3">
         {[
-          { label: "Matches Played", value: profile?.totalMatchesPlayed ?? 0 },
-          { label: "Win Rate", value: `${profile?.winRate ?? 0}%` },
-          { label: "Squad Rank", value: `#${profile?.rank ?? "--"}` },
+          { label: "Trust Score", value: profile?.trustScore ?? 0, icon: Shield },
+          { label: "Badges", value: profile?.badgeCount ?? 0, icon: Star },
+          { label: "Strike Pts", value: profile?.strikePoints ?? 0, icon: Zap },
         ].map((stat) => (
           <div key={stat.label} className="glass-card rounded-xl p-3 border border-white/[0.05] text-center">
-            <p className="text-xl font-black text-primary">{stat.value}</p>
-            <p className="text-xs text-muted-foreground mt-1">{stat.label}</p>
+            <stat.icon className="w-4 h-4 text-primary mx-auto mb-1" />
+            <p className="text-xl font-black text-white">{stat.value}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{stat.label}</p>
           </div>
         ))}
       </div>

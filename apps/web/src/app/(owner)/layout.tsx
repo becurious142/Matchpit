@@ -56,7 +56,6 @@ function SidebarContent() {
       <div className="p-4 border-t border-white/[0.06]">
         <div className="flex items-center gap-3 px-3 py-2">
           <UserButton 
-            afterSignOutUrl="/"
             appearance={{
               elements: {
                 avatarBox: "w-8 h-8",
@@ -93,10 +92,10 @@ export default function OwnerLayout({ children }: { children: React.ReactNode })
         <header className="md:hidden sticky top-0 z-40 bg-[#0B1020]/90 backdrop-blur-md border-b border-white/[0.06] h-14 px-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Sheet open={isMobileOpen} onOpenChange={setIsMobileOpen}>
-              <SheetTrigger asChild>
-                <button className="p-1.5 -ml-1.5 text-muted-foreground hover:text-white transition-colors">
-                  <Menu className="w-5 h-5" />
-                </button>
+              <SheetTrigger 
+                render={<button className="p-1.5 -ml-1.5 text-muted-foreground hover:text-white transition-colors" />}
+              >
+                <Menu className="w-5 h-5" />
               </SheetTrigger>
               <SheetContent side="left" className="p-0 w-64 border-r border-white/[0.06] bg-[#03040B]">
                 <SidebarContent />
@@ -109,7 +108,7 @@ export default function OwnerLayout({ children }: { children: React.ReactNode })
               MATCH<span className="text-gradient-lime pr-1">PIT</span>
             </span>
           </div>
-          <UserButton afterSignOutUrl="/" />
+          <UserButton />
         </header>
 
         {/* Page Content */}

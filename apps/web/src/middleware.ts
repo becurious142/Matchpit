@@ -52,7 +52,9 @@ export default clerkMiddleware(async (auth, req) => {
   }
 
   const role = (sessionClaims?.metadata as { role?: string })?.role ?? "player";
-  const onboardingComplete = (sessionClaims?.metadata as { onboardingComplete?: boolean })?.onboardingComplete ?? false;
+  const publicOnboarding = (sessionClaims?.metadata as { onboardingComplete?: boolean })?.onboardingComplete ?? false;
+  const unsafeOnboarding = (sessionClaims?.unsafeMetadata as { onboardingComplete?: boolean })?.onboardingComplete ?? false;
+  const onboardingComplete = publicOnboarding || unsafeOnboarding;
 
   // Force onboarding for new users hitting app routes
   if (isAppRoute(req) && !onboardingComplete && !url.pathname.startsWith("/onboarding")) {

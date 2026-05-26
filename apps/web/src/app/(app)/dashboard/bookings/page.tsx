@@ -51,37 +51,43 @@ export default function BookingsDashboard() {
               </Link>
             </div>
           ) : (
-            joinedMatches?.map((match) => (
-              <div key={match.id} className="glass-card p-5 rounded-2xl border border-white/[0.07] flex flex-col gap-4">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <span className="text-[10px] font-bold tracking-widest uppercase text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded mb-2 inline-block">
-                      {match.sport}
+            joinedMatches?.map((participant) => {
+              const match = participant.match;
+              if (!match) return null;
+              
+              return (
+                <div key={participant.id} className="glass-card p-5 rounded-2xl border border-white/[0.07] flex flex-col gap-4">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="text-[10px] font-bold tracking-widest uppercase text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded mb-2 inline-block">
+                        {match.sport}
+                      </span>
+                      <h3 className="text-lg font-bold capitalize">Hosted Match ({match.skillLevel.replace("_", " ")})</h3>
+                    </div>
+                    <span className={cn(
+                      "text-xs font-semibold px-2 py-1 rounded capitalize",
+                      participant.status === "final_paid" ? "bg-green-500/10 text-green-500" : 
+                      participant.status === "cancelled" ? "bg-red-500/10 text-red-500" : "bg-white/10 text-white/70"
+                    )}>
+                      {participant.status.replace("_", " ")}
                     </span>
-                    <h3 className="text-lg font-bold">{match.title}</h3>
                   </div>
-                  <span className={cn(
-                    "text-xs font-semibold px-2 py-1 rounded",
-                    match.status === "open" ? "bg-green-500/10 text-green-500" : "bg-white/10 text-white/70"
-                  )}>
-                    {match.status}
-                  </span>
-                </div>
-                
-                <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                  <div className="flex items-center gap-1.5">
-                    <Calendar className="w-4 h-4 text-white/70" />
-                    {format(new Date(match.startTime), "MMM d, h:mm a")}
+                  
+                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                    <div className="flex items-center gap-1.5">
+                      <Calendar className="w-4 h-4 text-white/70" />
+                      {format(new Date(match.startTime), "MMM d, h:mm a")}
+                    </div>
                   </div>
-                </div>
 
-                <div className="pt-4 border-t border-white/[0.05] flex justify-end gap-3">
-                  <Link href={`/matches/${match.id}`}>
-                    <Button variant="outline" size="sm" className="border-white/10">View Lobby</Button>
-                  </Link>
+                  <div className="pt-4 border-t border-white/[0.05] flex justify-end gap-3">
+                    <Link href={`/matches/${match.id}`}>
+                      <Button variant="outline" size="sm" className="border-white/10">View Lobby</Button>
+                    </Link>
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </TabsContent>
 

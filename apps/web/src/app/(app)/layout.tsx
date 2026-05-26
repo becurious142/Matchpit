@@ -36,7 +36,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <span className="text-xs font-bold text-white">Wallet</span>
             </button>
             <UserButton 
-              afterSignOutUrl="/"
               appearance={{
                 elements: {
                   avatarBox: "w-8 h-8 ring-2 ring-white/10 hover:ring-primary/50 transition-all",

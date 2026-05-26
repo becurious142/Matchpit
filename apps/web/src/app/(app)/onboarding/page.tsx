@@ -42,17 +42,17 @@ export default function OnboardingPage() {
       // 1. Update Backend Profile
       await updateProfile.mutateAsync({
         data: {
-          bio: "Ready to play!",
-          preferredSports: selectedSports,
+          favoriteSports: selectedSports,
+          onboardingComplete: true,
         },
       });
 
       // 2. Update Clerk Metadata so middleware knows we're done
       await user.update({
-        publicMetadata: {
-          ...user.publicMetadata,
+        unsafeMetadata: {
+          ...user.unsafeMetadata,
           onboardingComplete: true,
-          role: user.publicMetadata.role || "player",
+          role: (user.unsafeMetadata.role as string) || "player",
         },
       });
 

@@ -31,7 +31,6 @@ function loadRazorpayScript(): Promise<boolean> {
 export function GlobalCheckoutSheet() {
   const { isCheckoutOpen, checkoutConfig, closeCheckout } = useAppUIStore();
   const balance = useWalletStore((s) => s.balance);
-  const setBalance = useWalletStore((s) => s.setBalance);
 
   const [step, setStep] = useState<CheckoutStep>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -57,9 +56,8 @@ export function GlobalCheckoutSheet() {
       const order = await createOrder.mutateAsync({
         data: {
           amount: checkoutConfig.amount!,
-          currency: checkoutConfig.currency ?? "INR",
-          type: checkoutConfig.type ?? "reserve",
-          ...(checkoutConfig.matchId ? { matchId: checkoutConfig.matchId } : {}),
+          type: (checkoutConfig.type ?? "match_reserve") as any,
+          referenceId: checkoutConfig.matchId ?? checkoutConfig.venueId ?? "wallet_topup",
           ...(checkoutConfig.venueId ? { venueId: checkoutConfig.venueId } : {}),
         },
       });
@@ -73,12 +71,12 @@ export function GlobalCheckoutSheet() {
       // 3. Open Razorpay modal
       await new Promise<void>((resolve, reject) => {
         const rzp = new window.Razorpay({
-          key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-          order_id: order.razorpayOrderId,
+          key: order.razorpayKeyId || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+          order_id: order.orderId,
           amount: order.amount,
           currency: order.currency ?? "INR",
           name: "Matchpit",
-          description: checkoutConfig.type === "reserve" ? "Slot Reserve Fee" : "Full Booking",
+          description: checkoutConfig.type === "match_reserve" ? "Slot Reserve Fee" : "Full Booking",
           theme: { color: "#C8F135" },
           modal: {
             ondismiss: () => {
@@ -95,15 +93,13 @@ export function GlobalCheckoutSheet() {
             try {
               const result = await verifyPayment.mutateAsync({
                 data: {
+                  type: (checkoutConfig.type ?? "match_reserve") as any,
+                  referenceId: checkoutConfig.matchId ?? checkoutConfig.venueId ?? "wallet_topup",
                   razorpayPaymentId: response.razorpay_payment_id,
                   razorpayOrderId: response.razorpay_order_id,
                   razorpaySignature: response.razorpay_signature,
                 },
               });
-              // Update wallet balance optimistically
-              if (result.newBalance !== undefined) {
-                setBalance(result.newBalance);
-              }
               setStep("success");
               resolve();
             } catch (err) {
@@ -119,7 +115,7 @@ export function GlobalCheckoutSheet() {
         setErrorMsg((err as Error).message ?? "Payment failed. Please try again.");
       }
     }
-  }, [checkoutConfig, createOrder, verifyPayment, setBalance]);
+  }, [checkoutConfig, createOrder, verifyPayment]);
 
   if (!isCheckoutOpen) return null;
 

@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useWalletStore } from "@/store/walletStore";
-import { useGetWallet } from "@workspace/api-client-react";
+import { useGetWallet, getGetWalletQueryKey } from "@workspace/api-client-react";
 
 /**
  * WalletSyncProvider - Fetches wallet from API and syncs into Zustand walletStore.
@@ -15,6 +15,7 @@ export function WalletSyncProvider({ children }: { children: React.ReactNode }) 
 
   const { data: wallet } = useGetWallet({
     query: {
+      queryKey: getGetWalletQueryKey(),
       enabled: !!isSignedIn,
       refetchInterval: 60 * 1000, // fallback polling — SSE will be primary
       staleTime: 30 * 1000,

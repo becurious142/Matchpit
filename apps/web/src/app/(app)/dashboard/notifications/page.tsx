@@ -22,7 +22,7 @@ export default function NotificationsPage() {
   const handleMarkRead = async (id: string, isRead: boolean) => {
     if (isRead) return;
     try {
-      await markRead.mutateAsync({ notificationId: id });
+      await markRead.mutateAsync({ id });
       decrementUnread();
       refetch(); // Optimistic update would be better here, but refetching is fine for now
     } catch (err) {
@@ -76,7 +76,7 @@ export default function NotificationsPage() {
                     </span>
                   </div>
                   <p className={cn("text-sm mt-1 leading-relaxed", isRead ? "text-muted-foreground" : "text-white/80")}>
-                    {notif.message}
+                    {notif.body}
                   </p>
                 </div>
                 {!isRead && (

@@ -28,7 +28,7 @@ export default function OwnerOverviewPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Dashboard Overview</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Welcome back, {profile?.displayName || "Venue Owner"}. Here's what's happening today.
+          Welcome back, {profile?.fullName || "Venue Owner"}. Here's what's happening today.
         </p>
       </div>
 

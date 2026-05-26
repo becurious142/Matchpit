@@ -50,7 +50,6 @@ function AdminSidebar() {
 
       <div className="p-4 border-t border-white/[0.04]">
         <UserButton 
-          afterSignOutUrl="/"
           showName
           appearance={{
             elements: {
@@ -85,10 +84,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <header className="lg:hidden sticky top-0 z-40 bg-[#020205] border-b border-white/[0.04] h-12 px-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Sheet open={isMobileOpen} onOpenChange={setIsMobileOpen}>
-              <SheetTrigger asChild>
-                <button className="p-1 -ml-1 text-white/50 hover:text-white transition-colors">
-                  <Menu className="w-5 h-5" />
-                </button>
+              <SheetTrigger 
+                render={<button className="p-1 -ml-1 text-white/50 hover:text-white transition-colors" />}
+              >
+                <Menu className="w-5 h-5" />
               </SheetTrigger>
               <SheetContent side="left" className="p-0 w-60 border-r border-white/[0.04] bg-[#020205]">
                 <AdminSidebar />
@@ -96,7 +95,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </Sheet>
             <span className="font-bold tracking-tight text-red-500 text-xs">ADMIN</span>
           </div>
-          <UserButton afterSignOutUrl="/" />
+          <UserButton />
         </header>
 
         {/* Page Content */}

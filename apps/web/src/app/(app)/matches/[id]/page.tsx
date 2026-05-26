@@ -24,11 +24,7 @@ export default function MatchLobbyPage({ params }: { params: Promise<{ id: strin
   const { userId } = useAuthStore();
 
   // Fetch Match Details
-  const { data: match, isLoading, error } = useGetHostedMatch(id, {
-    query: {
-      refetchInterval: 30000, // Poll every 30s as fallback to realtime
-    }
-  });
+  const { data: match, isLoading, error } = useGetHostedMatch(id);
 
   if (isLoading) {
     return (
@@ -47,14 +43,14 @@ export default function MatchLobbyPage({ params }: { params: Promise<{ id: strin
     );
   }
 
-  const spotsTotal = match.maxPlayers;
+  const spotsTotal = match.totalPlayers;
   // Use realtime participants if available, fallback to fetched data
   const spotsFilled = presence?.joinedParticipants ?? match.participants?.length ?? 0;
   const spotsLeft = Math.max(0, spotsTotal - spotsFilled);
   const isFull = spotsLeft === 0;
 
   // Determine if the current user is already in the match
-  const isJoined = match.participants?.some(p => p.profileId === userId);
+  const isJoined = match.participants?.some(p => p.userId === userId);
 
   const handleJoin = () => {
     if (!userId) {
@@ -66,9 +62,9 @@ export default function MatchLobbyPage({ params }: { params: Promise<{ id: strin
     openCheckout({
       matchId: id,
       venueId: match.venueId,
-      amount: match.costPerPlayer,
+      amount: match.reserveFee,
       currency: "INR",
-      type: "reserve",
+      type: "match_reserve",
     });
   };
 
@@ -100,7 +96,7 @@ export default function MatchLobbyPage({ params }: { params: Promise<{ id: strin
             </span>
           </div>
           <h1 className="text-3xl font-black uppercase tracking-tighter italic" style={{ fontFamily: "var(--font-space-grotesk)" }}>
-            {match.title}
+            Hosted Match ({match.skillLevel.replace("_", " ")})
           </h1>
         </div>
 
@@ -142,7 +138,7 @@ export default function MatchLobbyPage({ params }: { params: Promise<{ id: strin
               {/* Render joined participants */}
               {match.participants?.map((p, i) => (
                 <div key={i} className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 border-2 border-[#0B1020] flex items-center justify-center shadow-lg">
-                  <span className="text-xs font-bold text-white uppercase">{p.profileId.substring(0, 2)}</span>
+                  <span className="text-xs font-bold text-white uppercase">{p.userId.substring(0, 2)}</span>
                 </div>
               ))}
               
@@ -170,7 +166,7 @@ export default function MatchLobbyPage({ params }: { params: Promise<{ id: strin
           </div>
           <div className="text-2xl font-black text-white flex items-center">
             <IndianRupee className="w-5 h-5 mr-0.5" />
-            {match.costPerPlayer}
+            {match.reserveFee}
           </div>
         </div>
 
@@ -195,7 +191,7 @@ export default function MatchLobbyPage({ params }: { params: Promise<{ id: strin
             onClick={handleJoin}
             className="w-full h-14 bg-primary text-primary-foreground hover:bg-primary/90 neon-glow font-black uppercase tracking-wider text-base shadow-[0_0_30px_rgba(200,241,53,0.3)]"
           >
-            Join Squad · ₹{match.costPerPlayer}
+            Join Squad · ₹{match.reserveFee}
           </Button>
         )}
       </div>
