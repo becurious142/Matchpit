@@ -1,9 +1,6 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Outfit } from "next/font/google";
+import { Inter, Space_Grotesk } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
-import { Navbar } from "@/components/layout/navbar";
-import { Footer } from "@/components/layout/footer";
-import { BottomNav } from "@/components/layout/bottom-nav";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
@@ -13,10 +10,11 @@ const inter = Inter({
   display: "swap",
 });
 
-const outfit = Outfit({
-  variable: "--font-outfit",
+const spaceGrotesk = Space_Grotesk({
+  variable: "--font-space-grotesk",
   subsets: ["latin"],
   display: "swap",
+  weight: ["400", "500", "600", "700"],
 });
 
 export const metadata: Metadata = {
@@ -50,7 +48,7 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   interactiveWidget: "resizes-visual",
-  themeColor: "#0F172A",
+  themeColor: "#050816",
 };
 
 export default function RootLayout({
@@ -62,17 +60,12 @@ export default function RootLayout({
     <ClerkProvider>
       <html
         lang="en"
-        className={`dark ${inter.variable} ${outfit.variable} h-full antialiased`}
+        className={`dark ${inter.variable} ${spaceGrotesk.variable} h-full antialiased`}
         suppressHydrationWarning
       >
-        <body className="min-h-full flex flex-col bg-background text-foreground">
+        <body className="min-h-full bg-background text-foreground">
           <Providers>
-            <Navbar />
-            <main className="flex-1">
-              {children}
-            </main>
-            <Footer />
-            <BottomNav />
+            {children}
           </Providers>
         </body>
       </html>

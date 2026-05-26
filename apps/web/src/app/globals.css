@@ -11,7 +11,7 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-inter);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-outfit);
+  --font-heading: var(--font-space-grotesk);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -75,7 +75,7 @@
   --chart-3: hsl(197 37% 24%);
   --chart-4: hsl(43 74% 66%);
   --chart-5: hsl(27 87% 67%);
-  --radius: 0.5rem;
+  --radius: 0.625rem;
   --sidebar: hsl(0 0% 98%);
   --sidebar-foreground: hsl(240 5.3% 26.1%);
   --sidebar-primary: hsl(240 5.9% 10%);
@@ -87,38 +87,54 @@
 }
 
 .dark {
-  --background: hsl(240 10% 4%);
-  --foreground: hsl(0 0% 98%);
-  --card: hsl(240 5% 7%);
-  --card-foreground: hsl(0 0% 98%);
-  --popover: hsl(240 5% 7%);
-  --popover-foreground: hsl(0 0% 98%);
-  --primary: hsl(84 100% 59%);
-  --primary-foreground: hsl(240 10% 4%);
-  --secondary: hsl(240 3.7% 15.9%);
-  --secondary-foreground: hsl(0 0% 98%);
-  --muted: hsl(240 3.7% 15.9%);
-  --muted-foreground: hsl(240 5% 65%);
-  --accent: hsl(240 3.7% 15.9%);
-  --accent-foreground: hsl(0 0% 98%);
-  --destructive: hsl(0 62.8% 30.6%);
+  /* Atmospheric deep navy — layered, NOT flat black */
+  --background: hsl(229 70% 5%);
+  --foreground: hsl(210 20% 95%);
+
+  /* Card surface — one step lighter than bg */
+  --card: hsl(228 50% 9%);
+  --card-foreground: hsl(210 20% 95%);
+
+  --popover: hsl(228 50% 9%);
+  --popover-foreground: hsl(210 20% 95%);
+
+  /* Neon lime — primary CTA and key active states ONLY */
+  --primary: hsl(84 100% 61%);
+  --primary-foreground: hsl(229 70% 5%);
+
+  /* Elevated surface layers */
+  --secondary: hsl(228 35% 13%);
+  --secondary-foreground: hsl(210 20% 80%);
+
+  --muted: hsl(228 35% 13%);
+  --muted-foreground: hsl(220 15% 55%);
+
+  --accent: hsl(228 35% 16%);
+  --accent-foreground: hsl(210 20% 95%);
+
+  --destructive: hsl(0 72% 51%);
   --destructive-foreground: hsl(0 0% 98%);
-  --border: hsl(240 5% 15%);
-  --input: hsl(240 5% 20%);
-  --ring: hsl(84 100% 59%);
-  --chart-1: hsl(220 70% 50%);
-  --chart-2: hsl(160 60% 45%);
-  --chart-3: hsl(30 80% 55%);
-  --chart-4: hsl(280 65% 60%);
-  --chart-5: hsl(340 75% 55%);
-  --sidebar: hsl(240 5.9% 10%);
-  --sidebar-foreground: hsl(240 4.8% 95.9%);
-  --sidebar-primary: hsl(84 100% 59%);
-  --sidebar-primary-foreground: hsl(240 10% 4%);
-  --sidebar-accent: hsl(240 3.7% 15.9%);
-  --sidebar-accent-foreground: hsl(240 4.8% 95.9%);
-  --sidebar-border: hsl(240 3.7% 15.9%);
-  --sidebar-ring: hsl(240 4.9% 83.9%);
+
+  --border: hsl(220 20% 14%);
+  --input: hsl(220 20% 14%);
+  --ring: hsl(84 100% 61%);
+
+  /* Chart accent system */
+  --chart-1: hsl(84 100% 61%);
+  --chart-2: hsl(217 91% 60%);
+  --chart-3: hsl(38 92% 50%);
+  --chart-4: hsl(271 91% 65%);
+  --chart-5: hsl(0 72% 51%);
+
+  /* Sidebar */
+  --sidebar: hsl(229 60% 7%);
+  --sidebar-foreground: hsl(210 20% 85%);
+  --sidebar-primary: hsl(84 100% 61%);
+  --sidebar-primary-foreground: hsl(229 70% 5%);
+  --sidebar-accent: hsl(228 35% 13%);
+  --sidebar-accent-foreground: hsl(210 20% 85%);
+  --sidebar-border: hsl(220 20% 14%);
+  --sidebar-ring: hsl(84 100% 61%);
 }
 
 @layer base {
@@ -131,4 +147,80 @@
   html {
     @apply font-sans;
   }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-space-grotesk, var(--font-sans));
+  }
+}
+
+@layer utilities {
+  /* ─── Glass surfaces — use ONLY on elevated cards, modals, overlays ─── */
+  .glass-card {
+    background: rgba(11, 16, 32, 0.72);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.055);
+  }
+
+  /* Slightly lighter glass for nav/headers */
+  .glass-surface {
+    background: rgba(5, 8, 22, 0.88);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  /* ─── Neon glow — ONLY for primary CTA buttons and active states ─── */
+  .neon-glow {
+    box-shadow: 0 0 18px rgba(182, 255, 59, 0.28), 0 0 36px rgba(182, 255, 59, 0.10);
+  }
+
+  /* ─── Gradient text — for key headline accent words ─── */
+  .text-gradient-lime {
+    background: linear-gradient(135deg, #B6FF3B 0%, #D3FF75 55%, #B6FF3B 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* ─── Scrollbar hide ─── */
+  .scrollbar-hide {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* ─── Safe area padding ─── */
+  .pb-safe {
+    padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  /* ─── Edge fade for horizontal scroll containers ─── */
+  .fade-edges {
+    -webkit-mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
+    mask-image: linear-gradient(to right, transparent, black 4%, black 96%, transparent);
+  }
+}
+
+/* ─── Live pulse — for realtime indicators only ─── */
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+.animate-live-pulse {
+  animation: live-pulse 1.8s ease-in-out infinite;
+}
+
+/* ─── Count-up easing — used in AnimatedCounter ─── */
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-count-up {
+  animation: count-up 0.4s ease-out forwards;
 }
