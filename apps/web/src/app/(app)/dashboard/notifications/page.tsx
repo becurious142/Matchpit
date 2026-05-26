@@ -50,7 +50,7 @@ export default function NotificationsPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {notifications?.map((notif) => {
+          {(Array.isArray(notifications) ? notifications : [])?.map((notif) => {
             const isRead = notif.isRead;
             return (
               <div 

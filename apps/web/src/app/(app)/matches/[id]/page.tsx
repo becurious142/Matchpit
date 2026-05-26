@@ -136,7 +136,7 @@ export default function MatchLobbyPage({ params }: { params: Promise<{ id: strin
           <div className="glass-card p-4 rounded-xl border border-white/[0.05]">
             <div className="flex flex-wrap gap-2">
               {/* Render joined participants */}
-              {match.participants?.map((p, i) => (
+              {(Array.isArray(match.participants) ? match.participants : [])?.map((p, i) => (
                 <div key={i} className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 border-2 border-[#0B1020] flex items-center justify-center shadow-lg">
                   <span className="text-xs font-bold text-white uppercase">{p.userId.substring(0, 2)}</span>
                 </div>

@@ -51,7 +51,7 @@ export default function BookingsDashboard() {
               </Link>
             </div>
           ) : (
-            joinedMatches?.map((participant) => {
+            (Array.isArray(joinedMatches) ? joinedMatches : [])?.map((participant) => {
               const match = participant.match;
               if (!match) return null;
               
@@ -103,7 +103,7 @@ export default function BookingsDashboard() {
               </Link>
             </div>
           ) : (
-            turfBookings?.map((booking) => (
+            (Array.isArray(turfBookings) ? turfBookings : [])?.map((booking) => (
               <div key={booking.id} className="glass-card p-5 rounded-2xl border border-white/[0.07] flex flex-col gap-4">
                 <div className="flex justify-between items-start">
                   <div>

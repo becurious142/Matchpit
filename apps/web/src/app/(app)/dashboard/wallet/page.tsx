@@ -61,7 +61,7 @@ export default function WalletLedgerPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {history?.map((tx) => {
+            {(Array.isArray(history) ? history : [])?.map((tx) => {
               const isCredit = tx.amount > 0;
               return (
                 <div key={tx.id} className="glass-card p-4 rounded-xl border border-white/[0.05] flex items-center justify-between">

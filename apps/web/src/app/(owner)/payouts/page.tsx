@@ -69,7 +69,7 @@ export default function OwnerPayoutsPage() {
           </div>
         ) : (
           <div className="divide-y divide-white/[0.05]">
-            {history?.map((tx) => {
+            {(Array.isArray(history) ? history : [])?.map((tx) => {
               const isCredit = tx.amount > 0;
               return (
                 <div key={tx.id} className="p-4 sm:px-6 flex items-center justify-between hover:bg-white/[0.02] transition-colors">

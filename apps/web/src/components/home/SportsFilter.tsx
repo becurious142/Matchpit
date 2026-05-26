@@ -22,7 +22,7 @@ export default function SportsFilter() {
               />
             ))
           ) : (
-            sportsData?.map((sport) => (
+            (Array.isArray(sportsData) ? sportsData : [])?.map((sport) => (
               <Link
                 key={sport.slug}
                 href={`/discover?sport=${sport.slug}`}
