@@ -80,7 +80,10 @@ export default function FeaturedVenues() {
 
                   {/* Sport badges — overlaid on image */}
                   <div className="absolute bottom-3 left-3 flex gap-1.5">
-                    {venue.sports?.slice(0, 2).map((sport: string) => (
+                    {(Array.isArray(venue.sports) 
+                        ? venue.sports 
+                        : typeof venue.sports === "string" ? [venue.sports] : []
+                      ).slice(0, 2).map((sport: string) => (
                       <span
                         key={sport}
                         className="text-[10px] font-bold uppercase tracking-wider bg-black/60 backdrop-blur-sm text-white border border-white/[0.12] rounded-full px-2 py-0.5"
