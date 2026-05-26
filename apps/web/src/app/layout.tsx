@@ -62,7 +62,7 @@ export default function RootLayout({
     <ClerkProvider>
       <html
         lang="en"
-        className={`${inter.variable} ${outfit.variable} h-full antialiased`}
+        className={`dark ${inter.variable} ${outfit.variable} h-full antialiased`}
         suppressHydrationWarning
       >
         <body className="min-h-full flex flex-col bg-background text-foreground">
