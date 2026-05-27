@@ -15,15 +15,42 @@ import { logger } from "../lib/logger";
 
 const REDIS_URL = env.REDIS_URL ?? "redis://localhost:6379";
 
-/** Shared options applied to all ioredis connections */
-const BASE_OPTS: RedisOptions = {
-  maxRetriesPerRequest: null, // Required by BullMQ
-  enableReadyCheck: false,    // Avoid blocking on ready check
-  lazyConnect: false,
-};
+/** Hosts that require TLS — redis:// must be upgraded to rediss:// */
+const TLS_REDIS_HOST =
+  /\.redis\.io$|\.upstash\.io$|\.redislabs\.com$|\.redis\.cloud$/i;
 
-function createConnection(name: string): Redis {
-  const conn = new Redis(REDIS_URL, BASE_OPTS);
+/**
+ * Redis Cloud / Upstash URLs are often copied as redis:// but require TLS.
+ * ioredis only enables TLS automatically for rediss:// URLs.
+ */
+export function resolveRedisUrl(url: string): string {
+  if (url.startsWith("redis://") && TLS_REDIS_HOST.test(new URL(url).hostname)) {
+    const upgraded = url.replace(/^redis:\/\//, "rediss://");
+    logger.info(
+      { host: new URL(url).hostname },
+      "Upgrading Redis URL to rediss:// for TLS",
+    );
+    return upgraded;
+  }
+  return url;
+}
+
+function buildRedisOptions(url: string): RedisOptions {
+  const opts: RedisOptions = {
+    maxRetriesPerRequest: null, // Required by BullMQ
+    enableReadyCheck: false,
+    lazyConnect: false,
+  };
+  if (url.startsWith("rediss://")) {
+    opts.tls = {};
+  }
+  return opts;
+}
+
+/** Create a dedicated ioredis connection (pub/sub needs its own). */
+export function createRedisConnection(name: string): Redis {
+  const url = resolveRedisUrl(REDIS_URL);
+  const conn = new Redis(url, buildRedisOptions(url));
 
 
   conn.on("connect", () => {
@@ -55,7 +82,7 @@ let _workerConnection: Redis | null = null;
  */
 export function getQueueConnection(): Redis {
   if (!_queueConnection) {
-    _queueConnection = createConnection("queue-producer");
+    _queueConnection = createRedisConnection("queue-producer");
   }
   return _queueConnection;
 }
@@ -66,7 +93,7 @@ export function getQueueConnection(): Redis {
  */
 export function getWorkerConnection(): Redis {
   if (!_workerConnection) {
-    _workerConnection = createConnection("queue-worker");
+    _workerConnection = createRedisConnection("queue-worker");
   }
   return _workerConnection;
 }

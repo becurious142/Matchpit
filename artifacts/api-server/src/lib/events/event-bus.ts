@@ -1,16 +1,13 @@
-import { getQueueConnection } from "../../queues/redis";
+import { createRedisConnection, getQueueConnection } from "../../queues/redis";
 import { DomainEvent } from "./domain-events";
 import { logger } from "../logger";
 import { env } from "../../config/env";
 import { EventStream } from "./event-stream";
-import Redis from "ioredis";
 
 const REDIS_PUBSUB_PREFIX = "matchpit:events:";
 const redisPublisher = getQueueConnection();
-// We need a dedicated subscriber connection for Redis Pub/Sub
-const redisSubscriber = new Redis(env.REDIS_URL, {
-  maxRetriesPerRequest: null,
-});
+// Pub/sub requires a dedicated subscriber connection
+const redisSubscriber = createRedisConnection("event-subscriber");
 
 type EventCallback = (event: DomainEvent) => void | Promise<void>;
 const subscribers = new Map<string, EventCallback[]>();

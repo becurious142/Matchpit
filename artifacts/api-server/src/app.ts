@@ -1,5 +1,5 @@
 import { env } from "./config/env";
-import express, { type Express } from "express";
+import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import { clerkMiddleware } from "@clerk/express";
@@ -91,5 +91,17 @@ app.use((req, res, next) => {
 });
 
 app.use("/api", router);
+
+// Return JSON for unhandled errors (avoids opaque HTML 500 pages on Railway/Vercel)
+app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+  const log = (req as Request & { log?: { error: (o: object, msg: string) => void } }).log;
+  log?.error({ err }, "Unhandled request error");
+  if (!res.headersSent) {
+    res.status(500).json({
+      error: "internal_error",
+      message: err instanceof Error ? err.message : "Unexpected server error",
+    });
+  }
+});
 
 export default app;

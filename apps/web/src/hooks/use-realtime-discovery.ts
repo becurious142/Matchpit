@@ -15,7 +15,11 @@ export function useRealtimeDiscovery(lat: number, lng: number, sport: string) {
         const token = await getToken();
         if (!token) return;
 
-        const url = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api/v1"}/realtime/discovery?lat=${lat}&lng=${lng}&sport=${sport}`;
+        const apiBase = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080").replace(
+          /\/+$/,
+          "",
+        );
+        const url = `${apiBase}/api/v1/realtime/discovery?lat=${lat}&lng=${lng}&sport=${sport}`;
         
         // SSE with Authorization header requires a custom EventSource implementation 
         // or passing the token via query params if the server supports it.
