@@ -8,6 +8,7 @@ import { useListFeaturedVenues } from "@workspace/api-client-react";
 
 export default function FeaturedVenues() {
   const { data: featuredVenues, isLoading: loadingVenues } = useListFeaturedVenues();
+  const venues = Array.isArray(featuredVenues) ? featuredVenues : [];
 
   return (
     <section>
@@ -45,7 +46,7 @@ export default function FeaturedVenues() {
               </div>
             </div>
           ))
-        ) : !featuredVenues?.length ? (
+        ) : venues.length === 0 ? (
           <div className="col-span-full py-16 text-center rounded-2xl border border-dashed border-white/[0.10] bg-white/[0.02]">
             <MapPin className="w-10 h-10 text-muted-foreground mx-auto mb-4 opacity-30" />
             <p className="font-bold text-lg text-muted-foreground">
@@ -59,7 +60,7 @@ export default function FeaturedVenues() {
             </Link>
           </div>
         ) : (
-          featuredVenues.slice(0, 3).map((venue: any, i: number) => (
+          venues.slice(0, 3).map((venue: any, i: number) => (
             <Link key={venue.id} href={`/venues/${venue.id}`}>
               <motion.article
                 initial={{ opacity: 0, y: 16 }}

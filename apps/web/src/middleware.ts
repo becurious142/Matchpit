@@ -12,6 +12,9 @@ const isPublicRoute = createRouteMatcher([
   "/clubs(.*)",
   "/teams(.*)",
   "/api/webhook(.*)",
+  // Public read-only API (proxied to backend via next.config rewrites)
+  "/api/venues(.*)",
+  "/api/hosted-matches(.*)",
 ]);
 
 // Owner-only routes
@@ -76,7 +79,7 @@ export default clerkMiddleware(async (auth, req) => {
 
 export const config = {
   matcher: [
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|json|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
     "/(api|trpc)(.*)",
   ],
 };

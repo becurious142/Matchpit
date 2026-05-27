@@ -30,6 +30,7 @@ export default function LiveMatchesFeed() {
   const { data: matchesData, isLoading: loadingMatches } = useListHostedMatches({
     status: "open",
   });
+  const matches = Array.isArray(matchesData?.matches) ? matchesData.matches : [];
 
   return (
     <section>
@@ -65,8 +66,8 @@ export default function LiveMatchesFeed() {
               <Skeleton className="h-[224px] w-full bg-white/[0.04]" />
             </div>
           ))
-        ) : matchesData?.matches && matchesData.matches.length > 0 ? (
-          matchesData.matches.slice(0, 4).map((match: any, i: number) => {
+        ) : matches.length > 0 ? (
+          matches.slice(0, 4).map((match: any, i: number) => {
             const spotsLeft = match.totalPlayers - match.currentPlayers;
             const fillPct = (match.currentPlayers / match.totalPlayers) * 100;
             const sport = SPORT_CONFIG[match.sport?.toLowerCase()] ?? DEFAULT_SPORT;
