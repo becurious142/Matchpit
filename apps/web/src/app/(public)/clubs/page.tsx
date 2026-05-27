@@ -1,18 +1,12 @@
 import { Users, Shield, Trophy, ChevronRight, MapPin } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { MOCK_CLUBS } from "@/lib/mock-clubs";
 
 export const metadata = {
   title: "Clubs",
   description: "Discover and join local sports clubs in your city.",
 };
-
-const MOCK_CLUBS = [
-  { id: 1, name: "Jaipur FC", sport: "Football", members: 142, activeMatches: 3, verified: true },
-  { id: 2, name: "Smashers Badminton", sport: "Badminton", members: 89, activeMatches: 1, verified: true },
-  { id: 3, name: "Cricket Royals", sport: "Cricket", members: 210, activeMatches: 0, verified: false },
-  { id: 4, name: "Hoops City", sport: "Basketball", members: 45, activeMatches: 2, verified: false },
-];
 
 export default function ClubsPage() {
   return (
@@ -46,7 +40,11 @@ export default function ClubsPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {MOCK_CLUBS.map((club) => (
-            <div key={club.id} className="glass-card rounded-2xl p-6 border border-white/[0.05] hover:border-primary/30 transition-colors group">
+            <Link
+              key={club.id}
+              href={`/clubs/${club.id}`}
+              className="glass-card rounded-2xl p-6 border border-white/[0.05] hover:border-primary/30 transition-colors group block"
+            >
               <div className="flex justify-between items-start mb-4">
                 <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-white/10 to-transparent border border-white/10 flex items-center justify-center shadow-lg">
                   <Users className="w-6 h-6 text-white/70" />
@@ -67,17 +65,17 @@ export default function ClubsPage() {
                 <div className="flex items-center gap-1.5">
                   <Users className="w-4 h-4 text-white/50" /> {club.members} Members
                 </div>
-                {club.activeMatches > 0 && (
+                {(club.activeMatches ?? 0) > 0 && (
                   <div className="flex items-center gap-1.5 text-amber-500">
                     <Trophy className="w-4 h-4" /> {club.activeMatches} Active Matches
                   </div>
                 )}
               </div>
 
-              <Button variant="outline" className="w-full border-white/10 group-hover:bg-white/[0.02] transition-colors">
+              <span className="flex items-center justify-center w-full py-2 text-sm font-semibold border border-white/10 rounded-md group-hover:bg-white/[0.02] transition-colors">
                 View Club <ChevronRight className="w-4 h-4 ml-1" />
-              </Button>
-            </div>
+              </span>
+            </Link>
           ))}
         </div>
       </section>
