@@ -6,6 +6,8 @@
   "scripts": {
     "hello": "tsx ./src/hello.ts",
     "seed": "tsx ./src/seed.ts",
+    "db:reset": "tsx ./src/db-reset.ts",
+    "db:fresh": "tsx ./src/db-fresh.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
@@ -15,6 +17,7 @@
   "dependencies": {
     "@workspace/db": "workspace:*",
     "date-fns": "^3.6.0",
+    "dotenv": "^17.4.2",
     "drizzle-orm": "catalog:"
   }
 }
